@@ -17,15 +17,26 @@ function isAppState(value: unknown): value is AppState {
 function migrateState(state: AppState): AppState {
   const fallbackPhotoEventId = state.photoEvents[0]?.id ?? '';
   const teams = state.teams.map((team) => ({ ...team, photoSources: Array.isArray(team.photoSources) ? team.photoSources : [] }));
-  const matchPairs = (Array.isArray(state.matchPairs) ? state.matchPairs : cloneState(seedState).matchPairs).map((pair) => {
-    if (Array.isArray(pair.photoSources) && pair.photoSources.length > 0) return pair;
+  const seededPairs = cloneState(seedState).matchPairs;
+  const matchPairs = (Array.isArray(state.matchPairs) ? state.matchPairs : seededPairs).map((pair) => {
+    const seededSources = seededPairs.find((seedPair) => seedPair.id === pair.id)?.photoSources ?? [];
+    if (Array.isArray(pair.photoSources) && pair.photoSources.length > 0) {
+      const photoSources = pair.photoSources.map((source) => {
+        const seededSource = seededSources.find((item) => item.provider === source.provider && item.url === source.url);
+        return seededSource?.previewUrls?.length && !source.previewUrls?.length
+          ? { ...seededSource, ...source, previewUrls: seededSource.previewUrls, syncStatus: source.syncStatus ?? seededSource.syncStatus }
+          : source;
+      });
+      return { ...pair, photoSources };
+    }
     const legacySources = [
       photoSourceForTeam(teams.find((team) => team.id === pair.teamAId)?.photoSources, pair.photoEventId),
       photoSourceForTeam(teams.find((team) => team.id === pair.teamBId)?.photoSources, pair.photoEventId),
     ].filter((source): source is NonNullable<typeof source> => Boolean(source))
       .map((source) => normalizePhotoSource(source, pair.photoEventId))
       .filter((source): source is NonNullable<typeof source> => Boolean(source));
-    return legacySources.length > 0 ? { ...pair, photoSources: legacySources } : { ...pair, photoSources: [] };
+    if (legacySources.length > 0) return { ...pair, photoSources: legacySources };
+    return seededSources.length > 0 ? { ...pair, photoSources: seededSources } : { ...pair, photoSources: [] };
   });
   return {
     ...state,
