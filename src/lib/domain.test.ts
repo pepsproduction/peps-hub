@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createEventFromDraft, matchPairExists, photoUploadStatus, searchTeams, slugify, sortEvents, teamPhotoCount, validateEventDraft, validateImageUpload, validateImageUrl, visibleEvents } from './domain';
-import { directImageUrl, isSafePhotoSourceUrl } from './photoSources';
+import { directImageUrl, isSafePhotoSourceUrl, limitPhotoPreviews, PHOTO_PREVIEW_LIMIT } from './photoSources';
 import type { EventDraft, MatchPair, PepsEvent, PhotoAsset, PhotoEvent, Team } from '../types';
 
 const teams: Team[] = [
@@ -72,6 +72,11 @@ describe('PepsHub domain logic', () => {
     expect(isSafePhotoSourceUrl('http://drive.google.com/drive/folders/folder-id')).toBe(false);
     expect(isSafePhotoSourceUrl('https://example.com/folder')).toBe(false);
     expect(directImageUrl({ provider: 'google-drive', url: 'https://drive.google.com/file/d/file-id/view' })).toBe('https://drive.google.com/uc?export=view&id=file-id');
+  });
+
+  it('limits Photo Match previews to the first six items', () => {
+    expect(PHOTO_PREVIEW_LIMIT).toBe(6);
+    expect(limitPhotoPreviews([1, 2, 3, 4, 5, 6, 7, 8])).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
   it('validates externally hosted cover image links', () => {

@@ -15,7 +15,9 @@ The default app is intentionally local-first. Seed content is in `src/data.ts` a
 
 Photo Match now starts with a published Photo Event index. Each event shows its upload state (`ลงรูปแล้ว`, `ลงรูปบางส่วน`, or `ยังไม่มีรูป`) and total image count. Selecting an event opens the team search workspace shown in the product reference, with counts scoped to that event.
 
-The admin workspace includes `คู่แข่งขันและรูป`, where an administrator adds a matchup such as `ทีม A VS ทีม C` inside a specific Photo Event. Each pair contains exactly two teams, and each team has its own Google Drive folder/file or Google Photos album link. New team names can be typed directly into the matchup form; only the compact team record needed for that matchup is created. Only HTTPS links on Google domains are accepted. The link is stored as event-scoped team metadata and is shown beside the selected team in Photo Match.
+The admin workspace includes `คู่แข่งขันและรูป`, where an administrator adds a matchup such as `ทีม A VS ทีม C` inside a specific Photo Event. Each pair contains exactly two teams, and each team has its own Google Drive folder/file or Google Photos album link. New team names can be typed directly into the matchup form; only the compact team record needed for that matchup is created. Only HTTPS links on Google domains are accepted. The link is stored as event-scoped team metadata and is shown as a short `ดูรูปเต็มได้ที่นี่` action beside the matchup and selected team; the raw URL is not shown to customers.
+
+Photo Match displays at most the first six synchronized preview assets for a team. The full Drive folder or Google Photos album remains available through the short source-link action, so the customer does not have to load the entire album inside the hub.
 
 The admin workspace is split into tabs: `ภาพรวม`, `งานและอีเว้น`, `ตารางงาน`, and `คู่แข่งขันและรูป`. This keeps the event form, schedule editor, and matchup/source workflow separate so the administrator does not need to scroll through one long page. Schedule controls use constrained grid columns and responsive stacking so datetime fields stay inside their card.
 

@@ -2,6 +2,12 @@ import type { PhotoProvider, PhotoSource } from '../types';
 
 const GOOGLE_HOSTS = new Set(['drive.google.com', 'docs.google.com', 'photos.google.com', 'photos.app.goo.gl']);
 
+export const PHOTO_PREVIEW_LIMIT = 6;
+
+export function limitPhotoPreviews<T>(items: T[]): T[] {
+  return items.slice(0, PHOTO_PREVIEW_LIMIT);
+}
+
 export function photoProviderLabel(provider: PhotoProvider): string {
   return provider === 'google-drive' ? 'Google Drive' : 'Google Photos';
 }

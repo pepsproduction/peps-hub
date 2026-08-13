@@ -19,8 +19,8 @@ import {
   visibleEvents,
 } from './lib/domain';
 import { loadState, saveState } from './lib/storage';
-import { isSafePhotoSourceUrl, photoProviderLabel, photoSourceForTeam } from './lib/photoSources';
-import type { EventDraft, MatchPair, Page, PhotoAsset, PhotoEvent, PhotoProvider, PepsEvent, Team, ValidationErrors } from './types';
+import { isSafePhotoSourceUrl, limitPhotoPreviews, photoProviderLabel, photoSourceForTeam } from './lib/photoSources';
+import type { EventDraft, MatchPair, Page, PhotoAsset, PhotoEvent, PhotoProvider, PhotoSource, PepsEvent, Team, ValidationErrors } from './types';
 import './styles.css';
 
 const EMPTY_DRAFT: EventDraft = {
@@ -334,8 +334,105 @@ function PhotoMatchPage({ state, selectedTeamSlug, onSelectTeam }: { state: Retu
 
   const teamSource = photoSourceForTeam(selectedTeam?.photoSources, photoEvent.id);
   const eventStatus = photoUploadStatus(photoEvent, state.photos);
+  const visibleTeamPhotos = limitPhotoPreviews(teamPhotos);
 
-  return <section className="page-section photo-page"><div className="container"><div className="photo-workspace-head"><button className="back-link" onClick={() => { setSelectedPhotoEventId(null); onSelectTeam(null); }}>← Photo Events ทั้งหมด</button><div className="photo-workspace-title"><span className="soft-chip cyan">PHOTO EVENT</span><h1>{photoEvent.title}</h1><p><Icon name="calendar" /> {photoEvent.dateLabel} <span className="detail-divider" /> <Icon name="settings" /> {photoEvent.location}</p>{eventPairs.length > 0 && <div className="photo-pair-strip">{eventPairs.map((pair) => { const teamA = state.teams.find((team) => team.id === pair.teamAId); const teamB = state.teams.find((team) => team.id === pair.teamBId); return <span key={pair.id}>{pair.label}: {teamA?.name ?? 'ทีม A'} VS {teamB?.name ?? 'ทีม B'}</span>; })}</div>}</div><div className={`photo-upload-status ${photoUploadStatusTone(eventStatus)}`}><span className="status-dot" /><strong>{photoUploadStatusLabel(eventStatus)}</strong><small>{state.photos.filter((photo) => photo.photoEventId === photoEvent.id).length} ภาพในอีเว้นนี้</small></div></div><div className="photo-search-layout"><div className="team-search-panel"><div className="search-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> SELECT YOUR TEAM</span><h2>ค้นหาทีม</h2></div><span className="result-count">{matchedTeams.length} ทีม</span></div><label className="search-box"><Icon name="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="พิมพ์ชื่อทีม หรือจังหวัด..." aria-label="ค้นหาทีม" />{query && <button type="button" onClick={() => setQuery('')} aria-label="ล้างคำค้น"><Icon name="close" /></button>}</label><div className="team-list">{matchedTeams.map((team) => <TeamRow key={team.id} team={team} selected={team.slug === selectedTeamSlug} onClick={() => onSelectTeam(team.slug)} />)}{matchedTeams.length === 0 && <EmptyState title="ไม่พบทีมที่ค้นหา" description="ลองค้นด้วยชื่อย่อ จังหวัด หรือรุ่นการแข่งขัน" />}</div></div><div className="matched-panel">{selectedTeam ? <><div className="matched-heading"><button className="back-link" onClick={() => onSelectTeam(null)}>← ทีมทั้งหมด</button><span className={`soft-chip ${teamPhotos.length > 0 ? 'green' : 'cyan'}`}>{teamPhotos.length > 0 ? 'พบภาพแล้ว' : 'รอตรวจรูป'}</span><h2>{selectedTeam.name}</h2><p>{selectedTeam.city} · {selectedTeam.category} · {teamPhotos.length} ภาพ</p>{teamSource ? <div className="matched-source"><span><Icon name="external" /> {photoProviderLabel(teamSource.provider)}</span><a href={teamSource.url} target="_blank" rel="noreferrer">เปิดต้นทาง <Icon name="arrow" /></a></div> : <div className="matched-source muted"><span><Icon name="camera" /> ยังไม่ได้ตั้ง Google source ของทีมนี้</span></div>}</div>{teamPhotos.length > 0 ? <div className="photo-grid">{teamPhotos.map((photo) => <button className="photo-tile" key={photo.id} onClick={() => setActivePhoto(photo)}><img src={photo.image} alt={`${selectedTeam.name} ${photo.label}`} /><span>{photo.capturedAt}</span></button>)}</div> : <TeamPhotoEmpty source={teamSource} />}</> : <div className="match-empty"><div className="match-empty-icon"><Icon name="camera" /></div><h2>เลือกทีมเพื่อดูภาพ</h2><p>ภาพการแข่งขันจะปรากฏตรงนี้ทันที<br />เมื่อคุณเลือกทีมจากรายการด้านซ้าย</p><div className="mini-steps"><span><b>01</b> ค้นหาทีม</span><span><b>02</b> เลือกทีม</span><span><b>03</b> ดูภาพ</span></div></div>}</div></div></div>{activePhoto && <PhotoLightbox photo={activePhoto} team={selectedTeam} onClose={() => setActivePhoto(null)} />}</section>;
+  return (
+    <section className="page-section photo-page">
+      <div className="container">
+        <div className="photo-workspace-head">
+          <button className="back-link" onClick={() => { setSelectedPhotoEventId(null); onSelectTeam(null); }}>← Photo Events ทั้งหมด</button>
+          <div className="photo-workspace-title">
+            <span className="soft-chip cyan">PHOTO EVENT</span>
+            <h1>{photoEvent.title}</h1>
+            <p><Icon name="calendar" /> {photoEvent.dateLabel} <span className="detail-divider" /> <Icon name="settings" /> {photoEvent.location}</p>
+            {eventPairs.length > 0 && (
+              <div className="photo-pair-strip" aria-label="คู่แข่งขันและทางเข้ารูปเต็ม">
+                {eventPairs.map((pair) => {
+                  const teamA = state.teams.find((team) => team.id === pair.teamAId);
+                  const teamB = state.teams.find((team) => team.id === pair.teamBId);
+                  const sourceA = teamA ? photoSourceForTeam(teamA.photoSources, photoEvent.id) : undefined;
+                  const sourceB = teamB ? photoSourceForTeam(teamB.photoSources, photoEvent.id) : undefined;
+                  return (
+                    <div className="photo-pair-item" key={pair.id}>
+                      <strong>{pair.label}: {teamA?.name ?? 'ทีม A'} VS {teamB?.name ?? 'ทีม B'}</strong>
+                      <div className="photo-pair-links">
+                        {sourceA && <PhotoSourceLink source={sourceA} label={'ดูรูปเต็มได้ที่นี่ · ' + (teamA?.shortName ?? 'ทีม A')} className="photo-pair-link" />}
+                        {sourceB && <PhotoSourceLink source={sourceB} label={'ดูรูปเต็มได้ที่นี่ · ' + (teamB?.shortName ?? 'ทีม B')} className="photo-pair-link" />}
+                        {!sourceA && !sourceB && <span className="photo-pair-no-link">ยังไม่ผูกแหล่งรูป</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <div className={'photo-upload-status ' + photoUploadStatusTone(eventStatus)}>
+            <span className="status-dot" />
+            <strong>{photoUploadStatusLabel(eventStatus)}</strong>
+            <small>{state.photos.filter((photo) => photo.photoEventId === photoEvent.id).length} ภาพในอีเว้นนี้</small>
+          </div>
+        </div>
+        <div className="photo-search-layout">
+          <div className="team-search-panel">
+            <div className="search-heading">
+              <div><span className="eyebrow"><span className="eyebrow-line" /> SELECT YOUR TEAM</span><h2>ค้นหาทีม</h2></div>
+              <span className="result-count">{matchedTeams.length} ทีม</span>
+            </div>
+            <label className="search-box">
+              <Icon name="search" />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="พิมพ์ชื่อทีม หรือจังหวัด..." aria-label="ค้นหาทีม" />
+              {query && <button type="button" onClick={() => setQuery('')} aria-label="ล้างคำค้น"><Icon name="close" /></button>}
+            </label>
+            <div className="team-list">
+              {matchedTeams.map((team) => <TeamRow key={team.id} team={team} selected={team.slug === selectedTeamSlug} onClick={() => onSelectTeam(team.slug)} />)}
+              {matchedTeams.length === 0 && <EmptyState title="ไม่พบทีมที่ค้นหา" description="ลองค้นด้วยชื่อย่อ จังหวัด หรือรุ่นการแข่งขัน" />}
+            </div>
+          </div>
+          <div className="matched-panel">
+            {selectedTeam ? (
+              <>
+                <div className="matched-heading">
+                  <button className="back-link" onClick={() => onSelectTeam(null)}>← ทีมทั้งหมด</button>
+                  <span className={visibleTeamPhotos.length > 0 ? 'soft-chip green' : 'soft-chip cyan'}>{visibleTeamPhotos.length > 0 ? 'พบภาพตัวอย่างแล้ว' : 'รอตัวอย่างรูป'}</span>
+                  <h2>{selectedTeam.name}</h2>
+                  <p>{selectedTeam.city} · {selectedTeam.category} · {visibleTeamPhotos.length} รูปตัวอย่าง{teamPhotos.length > visibleTeamPhotos.length ? ' จากทั้งหมด ' + teamPhotos.length : ''}</p>
+                  {teamSource ? (
+                    <div className="matched-source">
+                      <span><Icon name="external" /> {photoProviderLabel(teamSource.provider)}</span>
+                      <PhotoSourceLink source={teamSource} label="ดูรูปเต็มได้ที่นี่" />
+                    </div>
+                  ) : (
+                    <div className="matched-source muted"><span><Icon name="camera" /> ยังไม่ได้ตั้ง Google source ของทีมนี้</span></div>
+                  )}
+                </div>
+                {visibleTeamPhotos.length > 0 ? (
+                  <div className="photo-preview-area">
+                    <div className="photo-preview-meta">
+                      <strong>ตัวอย่างภาพ</strong>
+                      <span>แสดงไม่เกิน 6 รูปแรก{teamSource ? ' · รูปเต็มดูจากลิงก์ด้านบน' : ''}</span>
+                    </div>
+                    <div className="photo-grid">
+                      {visibleTeamPhotos.map((photo) => <button className="photo-tile" key={photo.id} onClick={() => setActivePhoto(photo)}><img src={photo.image} alt={selectedTeam.name + ' ' + photo.label} /><span>{photo.capturedAt}</span></button>)}
+                    </div>
+                  </div>
+                ) : (
+                  <TeamPhotoEmpty source={teamSource} />
+                )}
+              </>
+            ) : (
+              <div className="match-empty">
+                <div className="match-empty-icon"><Icon name="camera" /></div>
+                <h2>เลือกทีมเพื่อดูภาพ</h2>
+                <p>ภาพการแข่งขันจะปรากฏตรงนี้ทันที<br />เมื่อคุณเลือกทีมจากรายการด้านซ้าย</p>
+                <div className="mini-steps"><span><b>01</b> ค้นหาทีม</span><span><b>02</b> เลือกทีม</span><span><b>03</b> ดูภาพ</span></div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      {activePhoto && <PhotoLightbox photo={activePhoto} team={selectedTeam} onClose={() => setActivePhoto(null)} />}
+    </section>
+  );
 }
 
 function PhotoEventIndex({ state, onSelect }: { state: ReturnType<typeof loadState>; onSelect: (eventId: string) => void }) {
@@ -351,8 +448,12 @@ function PhotoEventCard({ event, state, onSelect }: { event: PhotoEvent; state: 
   return <article className="photo-event-card"><div className="photo-event-card-cover" style={{ backgroundImage: `url(${event.cover})` }}><span className="soft-chip cyan">PHOTO EVENT</span><span className={`event-status-chip ${photoUploadStatusTone(status)}`}><i /> {photoUploadStatusLabel(status)}</span></div><div className="photo-event-card-body"><div className="photo-event-card-meta"><span><Icon name="calendar" /> {event.dateLabel}</span><span><Icon name="camera" /> {photoCount} ภาพ</span></div><h2>{event.title}</h2><p><Icon name="settings" /> {event.location}</p><div className="photo-event-card-footer"><span>{linkedTeams > 0 ? `${linkedTeams} ทีมมี Google source` : 'ค้นหาทีมจากอีเว้นนี้'}</span><button className="button primary" onClick={onSelect}>เลือกอีเว้น <Icon name="arrow" /></button></div></div></article>;
 }
 
+function PhotoSourceLink({ source, label = 'ดูรูปเต็มได้ที่นี่', className = 'photo-source-link' }: { source: PhotoSource; label?: string; className?: string }) {
+  return <a className={className} href={source.url} target="_blank" rel="noreferrer" aria-label={`${label} (${photoProviderLabel(source.provider)})`}>{label} <Icon name="external" /></a>;
+}
+
 function TeamPhotoEmpty({ source }: { source?: ReturnType<typeof photoSourceForTeam> }) {
-  return <div className="team-photo-empty"><div className="match-empty-icon"><Icon name="camera" /></div><h3>{source ? 'มี Google source แล้ว แต่ยังไม่มีรูปที่ sync' : 'ยังไม่มีรูปของทีมนี้ในอีเว้นนี้'}</h3><p>{source ? 'เมื่อเชื่อม Google Drive/Photos adapter แล้ว รูปจะมาแสดงในพื้นที่นี้' : 'ลองเลือกทีมอื่น หรือกลับไปเลือก Photo Event ที่ลงรูปแล้ว'}</p>{source && <a className="button ghost" href={source.url} target="_blank" rel="noreferrer">เปิด {photoProviderLabel(source.provider)} <Icon name="external" /></a>}</div>;
+  return <div className="team-photo-empty"><div className="match-empty-icon"><Icon name="camera" /></div><h3>{source ? 'มีแหล่งรูปแล้ว แต่ยังไม่มีตัวอย่างรูป' : 'ยังไม่มีรูปของทีมนี้ในอีเว้นนี้'}</h3><p>{source ? 'ระบบจะแสดงตัวอย่างสูงสุด 6 รูปแรกเมื่อมีรูปที่ sync เข้ามา ส่วนรูปเต็มเปิดจากลิงก์ด้านบนได้เลย' : 'ลองเลือกทีมอื่น หรือกลับไปเลือก Photo Event ที่ลงรูปแล้ว'}</p>{source && <PhotoSourceLink source={source} label="ดูรูปเต็มได้ที่นี่" className="button ghost" />}</div>;
 }
 
 function TeamRow({ team, selected, onClick }: { team: Team; selected: boolean; onClick: () => void }) {
