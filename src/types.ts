@@ -43,7 +43,11 @@ export interface PhotoSource {
   provider: PhotoProvider;
   url: string;
   label?: string;
+  previewUrls?: string[];
   lastSyncedAt?: string;
+  syncMode?: 'auto' | 'manual';
+  syncStatus?: 'ready' | 'pending' | 'error';
+  syncError?: string;
 }
 
 export interface PhotoAsset {
@@ -73,6 +77,7 @@ export interface MatchPair {
   teamAId: string;
   teamBId: string;
   label: string;
+  photoSources?: PhotoSource[];
 }
 
 export interface AppState {

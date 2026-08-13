@@ -1,4 +1,4 @@
-import type { AppState, MatchPair, PhotoAsset, PhotoEvent, PepsEvent, Team } from './types';
+import type { AppState, MatchPair, PhotoAsset, PhotoEvent, PhotoSource, PepsEvent, Team } from './types';
 
 function svgDataUrl(label: string, from: string, to: string, accent = '#a6ff5b'): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 600"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${from}"/><stop offset="1" stop-color="${to}"/></linearGradient><filter id="blur"><feGaussianBlur stdDeviation="38"/></filter></defs><rect width="900" height="600" fill="url(#g)"/><circle cx="720" cy="100" r="170" fill="${accent}" opacity=".18" filter="url(#blur)"/><circle cx="130" cy="520" r="230" fill="#ffffff" opacity=".07"/><path d="M0 450C220 350 290 580 510 430s270-50 390 20v150H0Z" fill="#06101d" opacity=".42"/><text x="54" y="105" fill="#fff" font-family="Arial,sans-serif" font-size="28" font-weight="700" letter-spacing="5">PEPS LIVE</text><text x="54" y="500" fill="#fff" font-family="Arial,sans-serif" font-size="58" font-weight="800">${label}</text></svg>`;
@@ -161,12 +161,41 @@ const photos: PhotoAsset[] = [
   { id: 'photo-ea-02', photoEventId: 'photo-event-rising-stars', teamSlug: 'eastside-athletic', image: photoDataUrl('EA · 02', '#3b2769', '#111d34', '#b6a0ff'), label: 'Action frame 02', capturedAt: '15:38' },
 ];
 
+const drivePreviewUrls = [
+  'https://lh3.googleusercontent.com/d/1ABPibzVzSEmQx2cN1IpuQk4XCgW0W5RP=w1200',
+  'https://lh3.googleusercontent.com/d/1ofOqChDEZmZwsVkwAOUi8iDYc5b_VO3K=w1200',
+  'https://lh3.googleusercontent.com/d/1vJXN6uJ0OFLj2l_aiuZIpuMWx0b4kduu=w1200',
+  'https://lh3.googleusercontent.com/d/1weuRSyqlnmC9J5Iw8LwPyO4Xc9VHdqr1=w1200',
+  'https://lh3.googleusercontent.com/d/1qmQnutqpMrD4GpMME-qkJFzeb6vaq-Ax=w1200',
+  'https://lh3.googleusercontent.com/d/1GG4oNKeE4UmLX5TMrnM8rkePptqrAPK-=w1200',
+];
+
+const demoMatchSources: PhotoSource[] = [
+  {
+    provider: 'google-drive',
+    url: 'https://drive.google.com/drive/folders/1gm-U2DBvJouPh8DW-ZQVNYF7_T89iGm7?usp=drive_link',
+    label: 'โฟลเดอร์ Google Drive สำหรับทดสอบ',
+    previewUrls: drivePreviewUrls,
+    syncMode: 'auto',
+    syncStatus: 'ready',
+  },
+  {
+    provider: 'google-photos',
+    url: 'https://photos.app.goo.gl/pZirhMbcr96sfz9k9',
+    label: 'อัลบั้ม Google Photos สำหรับทดสอบ',
+    syncMode: 'auto',
+    syncStatus: 'pending',
+  },
+];
+
 const matchPairs: MatchPair[] = [
   { id: 'match-pair-rising-stars-1', photoEventId: 'photo-event-rising-stars', teamAId: 'team-peps-united', teamBId: 'team-north-star', label: 'คู่ที่ 1' },
   { id: 'match-pair-rising-stars-2', photoEventId: 'photo-event-rising-stars', teamAId: 'team-river-city', teamBId: 'team-eastside', label: 'คู่ที่ 2' },
   { id: 'match-pair-city-night-1', photoEventId: 'photo-event-city-night', teamAId: 'team-peps-united', teamBId: 'team-river-city', label: 'คู่ที่ 1' },
 ];
 
-export const seedState: AppState = { events, teams, photoEvents, photos, matchPairs };
+const seededMatchPairs = matchPairs.map((pair, index) => index === 0 ? { ...pair, photoSources: demoMatchSources } : pair);
 
-export { events, teams, photoEvents, photos, matchPairs };
+export const seedState: AppState = { events, teams, photoEvents, photos, matchPairs: seededMatchPairs };
+
+export { events, teams, photoEvents, photos, seededMatchPairs as matchPairs };

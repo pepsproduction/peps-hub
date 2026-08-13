@@ -15,9 +15,11 @@ The default app is intentionally local-first. Seed content is in `src/data.ts` a
 
 Photo Match now starts with a published Photo Event index. Each event shows its upload state (`ลงรูปแล้ว`, `ลงรูปบางส่วน`, or `ยังไม่มีรูป`) and total image count. Selecting an event opens the team search workspace shown in the product reference, with counts scoped to that event.
 
-The admin workspace includes `คู่แข่งขันและรูป`, where an administrator adds a matchup such as `ทีม A VS ทีม C` inside a specific Photo Event. Each pair contains exactly two teams, and each team has its own Google Drive folder/file or Google Photos album link. New team names can be typed directly into the matchup form; only the compact team record needed for that matchup is created. Only HTTPS links on Google domains are accepted. The link is stored as event-scoped team metadata and is shown as a short `ดูรูปเต็มได้ที่นี่` action beside the matchup and selected team; the raw URL is not shown to customers.
+The admin workspace includes `คู่แข่งขันและรูป`, where an administrator adds one matchup such as `ทีม A VS ทีม C` inside a specific Photo Event. Each pair contains exactly two teams and owns its Google Drive and/or Google Photos links. New team names can be typed directly into the matchup form; only the compact team records needed for that matchup are created. Only HTTPS links on Google domains are accepted. The public page only shows the pair name and a short `ดูรูปเต็มได้ที่นี่` action; raw URLs are never shown to customers.
 
-Photo Match displays at most the first six synchronized preview assets for a team. The full Drive folder or Google Photos album remains available through the short source-link action, so the customer does not have to load the entire album inside the hub.
+Photo Match is pair-first: customers choose a Photo Event, then search/select a numbered match pair. It displays at most the first six synchronized preview assets for that pair. The full Drive folder or Google Photos album remains available through the short source-link action, so the customer does not have to load the entire album inside the hub. Pair sources carry `syncMode` and `syncStatus` metadata so a backend scheduler can refresh the preview manifest without changing the public UI.
+
+The seed data includes the supplied Google Drive folder and Google Photos album on the first demo pair. The six Drive preview URLs were verified as publicly readable image responses. The Photos link is stored and opens the album, but its public-album thumbnails are not treated as stable unauthenticated API media URLs; production automatic refresh therefore needs an OAuth-backed server adapter.
 
 The admin workspace is split into tabs: `ภาพรวม`, `งานและอีเว้น`, `ตารางงาน`, and `คู่แข่งขันและรูป`. This keeps the event form, schedule editor, and matchup/source workflow separate so the administrator does not need to scroll through one long page. Schedule controls use constrained grid columns and responsive stacking so datetime fields stay inside their card.
 
@@ -36,7 +38,7 @@ npm run build
 
 ## Firebase boundary
 
-Production credentials are not present in this checkout, so the app does not claim to be connected to Firebase. The local implementation remains usable without credentials, while the Firebase boundary is prepared in:
+The static production site is deployed to Firebase Hosting project `my-project-1531149704307`, using the dedicated Hosting site `pepshub`. No private Firebase credential is stored in this checkout. The local implementation remains usable without credentials, while the Firebase data boundary is prepared in:
 
 - `.env.example` — public web-config placeholders
 - `firebase.json` — Auth, Firestore, Storage, and emulator ports
@@ -52,7 +54,7 @@ npm run firebase:emulators
 npm run firebase:seed
 ```
 
-Before production deployment, connect a named Firebase project, configure Authentication and the `admin: true` custom claim, add a real data adapter, then run rules tests against the emulator. One existing Firebase project can be shared by registering PepsHub as another Web App, provided this project is the same product/environment and its existing rules, quotas, billing, and data ownership are acceptable. Do not reuse it for unrelated production products or an isolated staging environment. No production data or credentials are touched by this MVP.
+Before moving admin data from localStorage to production, register PepsHub as a separate Web App in the same Firebase project, configure Authentication and the `admin: true` custom claim, add a real data adapter, then run rules tests against the emulator. Sharing the existing project is acceptable only if its quotas, billing, and data ownership are acceptable for PepsHub; the existing PepsLive app and its data must remain isolated. No production private credential is committed.
 
 ## Production photo integration checklist
 

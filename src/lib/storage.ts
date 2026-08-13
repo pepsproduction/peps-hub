@@ -1,4 +1,5 @@
 import { seedState } from '../data';
+import { normalizePhotoSource, photoSourceForTeam } from './photoSources';
 import type { AppState } from '../types';
 
 const STORAGE_KEY = 'pepshub-state-v1';
@@ -15,10 +16,21 @@ function isAppState(value: unknown): value is AppState {
 
 function migrateState(state: AppState): AppState {
   const fallbackPhotoEventId = state.photoEvents[0]?.id ?? '';
+  const teams = state.teams.map((team) => ({ ...team, photoSources: Array.isArray(team.photoSources) ? team.photoSources : [] }));
+  const matchPairs = (Array.isArray(state.matchPairs) ? state.matchPairs : cloneState(seedState).matchPairs).map((pair) => {
+    if (Array.isArray(pair.photoSources) && pair.photoSources.length > 0) return pair;
+    const legacySources = [
+      photoSourceForTeam(teams.find((team) => team.id === pair.teamAId)?.photoSources, pair.photoEventId),
+      photoSourceForTeam(teams.find((team) => team.id === pair.teamBId)?.photoSources, pair.photoEventId),
+    ].filter((source): source is NonNullable<typeof source> => Boolean(source))
+      .map((source) => normalizePhotoSource(source, pair.photoEventId))
+      .filter((source): source is NonNullable<typeof source> => Boolean(source));
+    return legacySources.length > 0 ? { ...pair, photoSources: legacySources } : { ...pair, photoSources: [] };
+  });
   return {
     ...state,
-    matchPairs: Array.isArray(state.matchPairs) ? state.matchPairs : cloneState(seedState).matchPairs,
-    teams: state.teams.map((team) => ({ ...team, photoSources: Array.isArray(team.photoSources) ? team.photoSources : [] })),
+    matchPairs,
+    teams,
     photos: state.photos
       .map((photo) => ({ ...photo, photoEventId: photo.photoEventId || fallbackPhotoEventId }))
       .filter((photo) => Boolean(photo.photoEventId)),

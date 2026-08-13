@@ -10,17 +10,15 @@ import {
   photoUploadStatus,
   photoUploadStatusLabel,
   photoUploadStatusTone,
-  searchTeams,
   slugify,
-  teamPhotoCount,
   validateEventDraft,
   validateImageUpload,
   validateImageUrl,
   visibleEvents,
 } from './lib/domain';
 import { loadState, saveState } from './lib/storage';
-import { isSafePhotoSourceUrl, limitPhotoPreviews, photoProviderLabel, photoSourceForTeam } from './lib/photoSources';
-import type { EventDraft, MatchPair, Page, PhotoAsset, PhotoEvent, PhotoProvider, PhotoSource, PepsEvent, Team, ValidationErrors } from './types';
+import { directImageUrl, isSafePhotoSourceUrl, limitPhotoPreviews, pairDisplayName, pairPreviewUrls, photoProviderLabel, photoSourcesForPair } from './lib/photoSources';
+import type { EventDraft, MatchPair, Page, PhotoAsset, PhotoEvent, PhotoProvider, PhotoSource, PhotoUploadStatus, PepsEvent, Team, ValidationErrors } from './types';
 import './styles.css';
 
 const EMPTY_DRAFT: EventDraft = {
@@ -62,7 +60,7 @@ function App() {
   const [state, setState] = useState(loadState);
   const [page, setPage] = useState<Page>('home');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [selectedTeamSlug, setSelectedTeamSlug] = useState<string | null>(null);
+  const [selectedPairId, setSelectedPairId] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<PepsEvent | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
@@ -81,8 +79,8 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const openPhotoMatch = (teamSlug?: string) => {
-    setSelectedTeamSlug(teamSlug ?? null);
+  const openPhotoMatch = (pairId?: string) => {
+    setSelectedPairId(pairId ?? null);
     navigate('photos');
   };
 
@@ -186,7 +184,7 @@ function App() {
     setNotice({ tone: 'success', message: 'อัปเดตตารางงานแล้ว' });
   };
 
-  const updateTeamPhotoSource = (teamId: string, eventId: string, provider: PhotoProvider, url: string) => {
+  const updateMatchPairPhotoSource = (pairId: string, provider: PhotoProvider, url: string) => {
     const cleanedUrl = url.trim();
     if (cleanedUrl && !isSafePhotoSourceUrl(cleanedUrl)) {
       setNotice({ tone: 'info', message: 'ใช้ลิงก์ https จาก Google Drive หรือ Google Photos เท่านั้น' });
@@ -194,16 +192,18 @@ function App() {
     }
     setState((current) => ({
       ...current,
-      teams: current.teams.map((team) => {
-        if (team.id !== teamId) return team;
-        const otherSources = (team.photoSources ?? []).filter((source) => source.eventId !== eventId);
+      matchPairs: current.matchPairs.map((pair) => {
+        if (pair.id !== pairId) return pair;
+        const otherSources = (pair.photoSources ?? []).filter((source) => source.provider !== provider);
+        const previewSource: PhotoSource = { provider, url: cleanedUrl };
+        const directPreview = cleanedUrl ? directImageUrl(previewSource) : undefined;
         return {
-          ...team,
-          photoSources: cleanedUrl ? [...otherSources, { eventId, provider, url: cleanedUrl, lastSyncedAt: undefined }] : otherSources,
+          ...pair,
+          photoSources: cleanedUrl ? [...otherSources, { provider, url: cleanedUrl, previewUrls: directPreview ? [directPreview] : undefined, syncMode: 'auto', syncStatus: directPreview ? 'ready' : 'pending' }] : otherSources,
         };
       }),
     }));
-    setNotice({ tone: 'success', message: cleanedUrl ? 'บันทึกลิงก์ต้นทางของทีมแล้ว' : 'ลบลิงก์ต้นทางของทีมแล้ว' });
+    setNotice({ tone: 'success', message: cleanedUrl ? 'บันทึกลิงก์รูปของคู่นี้แล้ว ระบบตั้งค่า sync อัตโนมัติไว้ให้' : 'ลบลิงก์รูปของคู่นี้แล้ว' });
   };
 
   const publicEvents = visibleEvents(state.events);
@@ -232,8 +232,8 @@ function App() {
 
       <main>
         {page === 'home' && <HomePage events={publicEvents} liveCount={liveCount} onOpenEvent={setSelectedEvent} onPhotoMatch={openPhotoMatch} />}
-        {page === 'photos' && <PhotoMatchPage state={state} selectedTeamSlug={selectedTeamSlug} onSelectTeam={setSelectedTeamSlug} />}
-        {page === 'admin' && <AdminPage state={state} unlocked={adminUnlocked} onUnlock={() => setAdminUnlocked(true)} onAddEvent={addEvent} onPublish={publishEvent} onUpdateTeamPhotoSource={updateTeamPhotoSource} onAddMatchPair={addMatchPair} onUpdateSchedule={updateEventSchedule} />}
+        {page === 'photos' && <PhotoMatchPage state={state} selectedPairId={selectedPairId} onSelectPair={setSelectedPairId} />}
+        {page === 'admin' && <AdminPage state={state} unlocked={adminUnlocked} onUnlock={() => setAdminUnlocked(true)} onAddEvent={addEvent} onPublish={publishEvent} onUpdateMatchPairPhotoSource={updateMatchPairPhotoSource} onAddMatchPair={addMatchPair} onUpdateSchedule={updateEventSchedule} />}
       </main>
 
       <footer className="site-footer">
@@ -314,159 +314,181 @@ function ScheduleRow({ event, onOpen }: { event: PepsEvent; onOpen: () => void }
   return <article className="schedule-row"><div className="date-block"><strong>{new Intl.DateTimeFormat('th-TH', { day: '2-digit' }).format(date)}</strong><span>{new Intl.DateTimeFormat('th-TH', { month: 'short' }).format(date)}</span></div><div className="schedule-info"><div className="schedule-tags"><span className="soft-chip">{event.tags[0] || 'EVENT'}</span><span>{scheduleRange(event)}</span></div><h3>{event.title}</h3><p>{event.venue}</p></div><div className="schedule-action"><span className="status-dot" /> <span>{eventStatusLabel(event.status)}</span><button className="icon-button" onClick={onOpen} aria-label={`ดูรายละเอียด ${event.title}`}><Icon name="arrow" /></button></div></article>;
 }
 
-function PhotoMatchPage({ state, selectedTeamSlug, onSelectTeam }: { state: ReturnType<typeof loadState>; selectedTeamSlug: string | null; onSelectTeam: (slug: string | null) => void }) {
+function PhotoMatchPage({ state, selectedPairId, onSelectPair }: { state: ReturnType<typeof loadState>; selectedPairId: string | null; onSelectPair: (id: string | null) => void }) {
   const [query, setQuery] = useState('');
   const [activePhoto, setActivePhoto] = useState<PhotoAsset | null>(null);
   const [selectedPhotoEventId, setSelectedPhotoEventId] = useState<string | null>(null);
   const photoEvent = state.photoEvents.find((event) => event.id === selectedPhotoEventId) ?? null;
   const eventPairs = useMemo(() => photoEvent ? state.matchPairs.filter((pair) => pair.photoEventId === photoEvent.id) : [], [photoEvent, state.matchPairs]);
-  const eventTeamIds = useMemo(() => new Set(eventPairs.flatMap((pair) => [pair.teamAId, pair.teamBId])), [eventPairs]);
-  const eventTeams = useMemo(() => photoEvent ? state.teams.filter((team) => eventPairs.length > 0 ? eventTeamIds.has(team.id) : photoEvent.teamSlugs.includes(team.slug)).map((team) => ({ ...team, photoCount: teamPhotoCount(state.photos, photoEvent.id, team.slug) })) : [], [eventPairs.length, eventTeamIds, photoEvent, state.photos, state.teams]);
-  const selectedTeam = eventTeams.find((team) => team.slug === selectedTeamSlug) ?? null;
-  const matchedTeams = useMemo(() => searchTeams(eventTeams, query), [eventTeams, query]);
-  const teamPhotos = selectedTeam && photoEvent ? state.photos.filter((photo) => photo.photoEventId === photoEvent.id && photo.teamSlug === selectedTeam.slug) : [];
+  const pairRows = useMemo(() => eventPairs.map((pair) => {
+    const sources = photoSourcesForPair(pair, state.teams, photoEvent?.id ?? '');
+    const teamSlugs = new Set([pair.teamAId, pair.teamBId].map((teamId) => state.teams.find((team) => team.id === teamId)?.slug).filter((slug): slug is string => Boolean(slug)));
+    const localPhotos = photoEvent
+      ? state.photos.filter((photo) => photo.photoEventId === photoEvent.id && teamSlugs.has(photo.teamSlug))
+      : [];
+    return {
+      pair,
+      name: pairDisplayName(pair, state.teams),
+      sources,
+      previewUrls: pairPreviewUrls(pair, state.teams, photoEvent?.id ?? ''),
+      localPhotos,
+    };
+  }), [eventPairs, photoEvent, state.photos, state.teams]);
+  const selectedRow = pairRows.find((row) => row.pair.id === selectedPairId) ?? null;
+  const matchedPairs = useMemo(() => {
+    const term = normalizeText(query);
+    if (!term) return pairRows;
+    return pairRows.filter((row) => [row.name, row.pair.label].some((field) => normalizeText(field).includes(term)));
+  }, [pairRows, query]);
+  const displayEventStatus = photoEvent ? photoEventDisplayStatus(photoEvent, state) : 'empty';
 
   useEffect(() => {
-    if (query && selectedTeamSlug && !matchedTeams.some((team) => team.slug === selectedTeamSlug)) onSelectTeam(null);
-  }, [matchedTeams, onSelectTeam, query, selectedTeamSlug]);
+    if (query && selectedPairId && !matchedPairs.some((row) => row.pair.id === selectedPairId)) onSelectPair(null);
+  }, [matchedPairs, onSelectPair, query, selectedPairId]);
 
-  if (!photoEvent) return <PhotoEventIndex state={state} onSelect={(eventId) => { setSelectedPhotoEventId(eventId); onSelectTeam(null); setQuery(''); }} />;
+  if (!photoEvent) return <PhotoEventIndex state={state} onSelect={(eventId) => { setSelectedPhotoEventId(eventId); onSelectPair(null); setQuery(''); }} />;
 
-  const teamSource = photoSourceForTeam(selectedTeam?.photoSources, photoEvent.id);
-  const eventStatus = photoUploadStatus(photoEvent, state.photos);
-  const visibleTeamPhotos = limitPhotoPreviews(teamPhotos);
+  const visiblePreviewUrls = limitPhotoPreviews(selectedRow?.previewUrls ?? []);
+  const visibleLocalPhotos = limitPhotoPreviews(selectedRow?.localPhotos ?? []);
+  const hasPreview = visiblePreviewUrls.length > 0 || visibleLocalPhotos.length > 0;
 
   return (
     <section className="page-section photo-page">
       <div className="container">
         <div className="photo-workspace-head">
-          <button className="back-link" onClick={() => { setSelectedPhotoEventId(null); onSelectTeam(null); }}>← Photo Events ทั้งหมด</button>
+          <button className="back-link" onClick={() => { setSelectedPhotoEventId(null); onSelectPair(null); }}>← Photo Events ทั้งหมด</button>
           <div className="photo-workspace-title">
             <span className="soft-chip cyan">PHOTO EVENT</span>
             <h1>{photoEvent.title}</h1>
             <p><Icon name="calendar" /> {photoEvent.dateLabel} <span className="detail-divider" /> <Icon name="settings" /> {photoEvent.location}</p>
-            {eventPairs.length > 0 && (
-              <div className="photo-pair-strip" aria-label="คู่แข่งขันและทางเข้ารูปเต็ม">
-                {eventPairs.map((pair) => {
-                  const teamA = state.teams.find((team) => team.id === pair.teamAId);
-                  const teamB = state.teams.find((team) => team.id === pair.teamBId);
-                  const sourceA = teamA ? photoSourceForTeam(teamA.photoSources, photoEvent.id) : undefined;
-                  const sourceB = teamB ? photoSourceForTeam(teamB.photoSources, photoEvent.id) : undefined;
-                  return (
-                    <div className="photo-pair-item" key={pair.id}>
-                      <strong>{pair.label}: {teamA?.name ?? 'ทีม A'} VS {teamB?.name ?? 'ทีม B'}</strong>
-                      <div className="photo-pair-links">
-                        {sourceA && <PhotoSourceLink source={sourceA} label={'ดูรูปเต็มได้ที่นี่ · ' + (teamA?.shortName ?? 'ทีม A')} className="photo-pair-link" />}
-                        {sourceB && <PhotoSourceLink source={sourceB} label={'ดูรูปเต็มได้ที่นี่ · ' + (teamB?.shortName ?? 'ทีม B')} className="photo-pair-link" />}
-                        {!sourceA && !sourceB && <span className="photo-pair-no-link">ยังไม่ผูกแหล่งรูป</span>}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
           </div>
-          <div className={'photo-upload-status ' + photoUploadStatusTone(eventStatus)}>
+          <div className={'photo-upload-status ' + photoUploadStatusTone(displayEventStatus)}>
             <span className="status-dot" />
-            <strong>{photoUploadStatusLabel(eventStatus)}</strong>
-            <small>{state.photos.filter((photo) => photo.photoEventId === photoEvent.id).length} ภาพในอีเว้นนี้</small>
+            <strong>{photoUploadStatusLabel(displayEventStatus)}</strong>
+            <small>{state.photos.filter((photo) => photo.photoEventId === photoEvent.id).length} ภาพในอีเว้นนี้ · {eventPairs.length} คู่แข่งขัน</small>
           </div>
         </div>
         <div className="photo-search-layout">
           <div className="team-search-panel">
             <div className="search-heading">
-              <div><span className="eyebrow"><span className="eyebrow-line" /> SELECT YOUR TEAM</span><h2>ค้นหาทีม</h2></div>
-              <span className="result-count">{matchedTeams.length} ทีม</span>
+              <div><span className="eyebrow"><span className="eyebrow-line" /> SELECT YOUR MATCH</span><h2>ค้นหาคู่แข่งขัน</h2></div>
+              <span className="result-count">{matchedPairs.length} คู่</span>
             </div>
             <label className="search-box">
               <Icon name="search" />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="พิมพ์ชื่อทีม หรือจังหวัด..." aria-label="ค้นหาทีม" />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="พิมพ์ชื่อทีมที่แข่งกัน เช่น PEPS UNITED VS RIVER CITY..." aria-label="ค้นหาคู่แข่งขัน" />
               {query && <button type="button" onClick={() => setQuery('')} aria-label="ล้างคำค้น"><Icon name="close" /></button>}
             </label>
             <div className="team-list">
-              {matchedTeams.map((team) => <TeamRow key={team.id} team={team} selected={team.slug === selectedTeamSlug} onClick={() => onSelectTeam(team.slug)} />)}
-              {matchedTeams.length === 0 && <EmptyState title="ไม่พบทีมที่ค้นหา" description="ลองค้นด้วยชื่อย่อ จังหวัด หรือรุ่นการแข่งขัน" />}
+              {matchedPairs.map((row) => {
+                const pairNumber = eventPairs.findIndex((pair) => pair.id === row.pair.id) + 1;
+                const previewCount = row.previewUrls.length || row.localPhotos.length;
+                return (
+                  <button className={'match-pair-public-row ' + (row.pair.id === selectedPairId ? 'selected' : '')} type="button" key={row.pair.id} onClick={() => onSelectPair(row.pair.id)}>
+                    <span className="pair-order">{String(pairNumber).padStart(2, '0')}</span>
+                    <span className="team-copy"><strong>{row.name}</strong><small>{previewCount > 0 ? previewCount + ' รูปตัวอย่าง' : row.sources.length > 0 ? 'รอ sync รูปตัวอย่าง' : 'ยังไม่มีแหล่งรูป'}</small></span>
+                    <span className="team-count">{row.sources.length > 0 ? 'มีลิงก์' : '—'}</span>
+                    <Icon name="arrow" />
+                  </button>
+                );
+              })}
+              {matchedPairs.length === 0 && <EmptyState title="ไม่พบคู่แข่งขันที่ค้นหา" description="ลองค้นด้วยชื่อทีมใดทีมหนึ่ง หรือกลับไปเลือก Photo Event อื่น" />}
             </div>
           </div>
           <div className="matched-panel">
-            {selectedTeam ? (
+            {selectedRow ? (
               <>
                 <div className="matched-heading">
-                  <button className="back-link" onClick={() => onSelectTeam(null)}>← ทีมทั้งหมด</button>
-                  <span className={visibleTeamPhotos.length > 0 ? 'soft-chip green' : 'soft-chip cyan'}>{visibleTeamPhotos.length > 0 ? 'พบภาพตัวอย่างแล้ว' : 'รอตัวอย่างรูป'}</span>
-                  <h2>{selectedTeam.name}</h2>
-                  <p>{selectedTeam.city} · {selectedTeam.category} · {visibleTeamPhotos.length} รูปตัวอย่าง{teamPhotos.length > visibleTeamPhotos.length ? ' จากทั้งหมด ' + teamPhotos.length : ''}</p>
-                  {teamSource ? (
-                    <div className="matched-source">
-                      <span><Icon name="external" /> {photoProviderLabel(teamSource.provider)}</span>
-                      <PhotoSourceLink source={teamSource} label="ดูรูปเต็มได้ที่นี่" />
-                    </div>
-                  ) : (
-                    <div className="matched-source muted"><span><Icon name="camera" /> ยังไม่ได้ตั้ง Google source ของทีมนี้</span></div>
-                  )}
+                  <button className="back-link" onClick={() => onSelectPair(null)}>← คู่แข่งขันทั้งหมด</button>
+                  <span className={hasPreview ? 'soft-chip green' : 'soft-chip cyan'}>{hasPreview ? 'มีรูปตัวอย่างแล้ว' : 'รอรูปตัวอย่าง'}</span>
+                  <h2>{selectedRow.name}</h2>
+                  <p>{selectedRow.pair.label} · แสดงตัวอย่างไม่เกิน 6 รูป{selectedRow.localPhotos.length > 6 ? ' จากทั้งหมด ' + selectedRow.localPhotos.length + ' รูป' : ''}</p>
+                  <PairSourceLinks sources={selectedRow.sources} />
                 </div>
-                {visibleTeamPhotos.length > 0 ? (
+                {visiblePreviewUrls.length > 0 ? (
                   <div className="photo-preview-area">
                     <div className="photo-preview-meta">
-                      <strong>ตัวอย่างภาพ</strong>
-                      <span>แสดงไม่เกิน 6 รูปแรก{teamSource ? ' · รูปเต็มดูจากลิงก์ด้านบน' : ''}</span>
+                      <strong>รูปตัวอย่างของคู่นี้</strong>
+                      <span>แสดง 6 รูปแรกจากแหล่งรูป · รูปเต็มเปิดจากลิงก์ข้างชื่อคู่</span>
                     </div>
                     <div className="photo-grid">
-                      {visibleTeamPhotos.map((photo) => <button className="photo-tile" key={photo.id} onClick={() => setActivePhoto(photo)}><img src={photo.image} alt={selectedTeam.name + ' ' + photo.label} /><span>{photo.capturedAt}</span></button>)}
+                      {visiblePreviewUrls.map((url, index) => <a className="photo-tile" href={url} target="_blank" rel="noreferrer" key={url}><img src={url} alt={selectedRow.name + ' รูปตัวอย่าง ' + (index + 1)} loading="lazy" /><span>{String(index + 1).padStart(2, '0')}</span></a>)}
+                    </div>
+                  </div>
+                ) : visibleLocalPhotos.length > 0 ? (
+                  <div className="photo-preview-area">
+                    <div className="photo-preview-meta">
+                      <strong>รูปตัวอย่างของคู่นี้</strong>
+                      <span>แสดงไม่เกิน 6 รูปจากรูปที่อยู่ในระบบ</span>
+                    </div>
+                    <div className="photo-grid">
+                      {visibleLocalPhotos.map((photo) => <button className="photo-tile" key={photo.id} onClick={() => setActivePhoto(photo)}><img src={photo.image} alt={selectedRow.name + ' ' + photo.label} /><span>{photo.capturedAt}</span></button>)}
                     </div>
                   </div>
                 ) : (
-                  <TeamPhotoEmpty source={teamSource} />
+                  <PairPhotoEmpty sources={selectedRow.sources} />
                 )}
               </>
             ) : (
               <div className="match-empty">
                 <div className="match-empty-icon"><Icon name="camera" /></div>
-                <h2>เลือกทีมเพื่อดูภาพ</h2>
-                <p>ภาพการแข่งขันจะปรากฏตรงนี้ทันที<br />เมื่อคุณเลือกทีมจากรายการด้านซ้าย</p>
-                <div className="mini-steps"><span><b>01</b> ค้นหาทีม</span><span><b>02</b> เลือกทีม</span><span><b>03</b> ดูภาพ</span></div>
+                <h2>เลือกคู่แข่งขันเพื่อดูรูป</h2>
+                <p>เลือกคู่จากรายการด้านซ้าย แล้วระบบจะแสดงรูปตัวอย่างสูงสุด 6 รูป<br />พร้อมทางเข้าไปดูรูปเต็มจากแหล่งต้นทาง</p>
+                <div className="mini-steps"><span><b>01</b> เลือก Photo Event</span><span><b>02</b> เลือกคู่แข่งขัน</span><span><b>03</b> ดูรูปตัวอย่าง</span></div>
               </div>
             )}
           </div>
         </div>
       </div>
-      {activePhoto && <PhotoLightbox photo={activePhoto} team={selectedTeam} onClose={() => setActivePhoto(null)} />}
+      {activePhoto && <PairPhotoLightbox photo={activePhoto} title={selectedRow?.name} onClose={() => setActivePhoto(null)} />}
     </section>
   );
 }
 
+function PairSourceLinks({ sources }: { sources: PhotoSource[] }) {
+  if (sources.length === 0) return <div className="matched-source muted"><span><Icon name="camera" /> ยังไม่มีลิงก์รูปของคู่นี้</span></div>;
+  return <div className="matched-source"><span><Icon name="external" /> แหล่งรูปของคู่แข่งขัน</span>{sources.map((source) => <PhotoSourceLink key={source.provider} source={source} label="ดูรูปเต็มได้ที่นี่" />)}</div>;
+}
+
+function PairPhotoEmpty({ sources }: { sources: PhotoSource[] }) {
+  return <div className="team-photo-empty"><div className="match-empty-icon"><Icon name="camera" /></div><h3>{sources.length > 0 ? 'มีลิงก์รูปแล้ว กำลังรอรูปตัวอย่าง' : 'ยังไม่มีรูปของคู่นี้ในอีเว้นนี้'}</h3><p>{sources.length > 0 ? 'ระบบจะแสดงรูปตัวอย่างอัตโนมัติไม่เกิน 6 รูปเมื่อการ sync เสร็จ รูปเต็มเปิดจากลิงก์ข้างชื่อคู่ได้เลย' : 'ทีมงานยังไม่ได้ผูกลิงก์รูปให้คู่นี้'}</p>{sources.map((source) => <PhotoSourceLink key={source.provider} source={source} label="ดูรูปเต็มได้ที่นี่" className="button ghost" />)}</div>;
+}
+
+function PairPhotoLightbox({ photo, title, onClose }: { photo: PhotoAsset; title?: string; onClose: () => void }) {
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><div className="photo-lightbox" role="dialog" aria-modal="true" aria-label="ดูรูปการแข่งขัน"><button className="modal-close" onClick={onClose} aria-label="ปิด"><Icon name="close" /></button><img src={photo.image} alt={title ? title + ' ' + photo.label : photo.label} /><div className="lightbox-caption"><strong>{title}</strong><span>{photo.label} · {photo.capturedAt}</span></div></div></div>;
+}
+
+function photoEventDisplayStatus(event: PhotoEvent, state: ReturnType<typeof loadState>): PhotoUploadStatus {
+  const baseStatus = photoUploadStatus(event, state.photos);
+  if (baseStatus !== 'empty') return baseStatus;
+  const pairSources = state.matchPairs
+    .filter((pair) => pair.photoEventId === event.id)
+    .flatMap((pair) => photoSourcesForPair(pair, state.teams, event.id));
+  if (pairSources.some((source) => source.syncStatus === 'ready' || (source.previewUrls?.length ?? 0) > 0)) return 'ready';
+  return pairSources.length > 0 ? 'partial' : 'empty';
+}
+
 function PhotoEventIndex({ state, onSelect }: { state: ReturnType<typeof loadState>; onSelect: (eventId: string) => void }) {
   const visiblePhotoEvents = state.photoEvents.filter((event) => event.status === 'published');
-  const readyCount = visiblePhotoEvents.filter((event) => photoUploadStatus(event, state.photos) === 'ready').length;
-  return <section className="page-section photo-page"><div className="container"><div className="page-hero photo-event-index-hero"><div className="eyebrow"><span className="eyebrow-line" /> PHOTO MATCH</div><h1>เลือกอีเว้นก่อน<br /><span>แล้วค่อยเจอภาพของคุณ</span></h1><p>ดูรายการ Photo Event ทั้งหมด พร้อมสถานะว่าลงรูปแล้วหรือยัง จากนั้นเลือกอีเว้นเพื่อค้นหาทีมแบบละเอียด</p></div><div className="photo-event-stats"><div><strong>{visiblePhotoEvents.length}</strong><span>อีเว้นที่เปิดให้ค้นหา</span></div><div><strong>{readyCount}</strong><span>อีเว้นที่ลงรูปแล้ว</span></div><div><strong>{state.photos.length}</strong><span>ภาพในระบบตอนนี้</span></div></div><div className="photo-event-grid">{visiblePhotoEvents.map((event) => <PhotoEventCard key={event.id} event={event} state={state} onSelect={() => onSelect(event.id)} />)}{visiblePhotoEvents.length === 0 && <EmptyState title="ยังไม่มี Photo Event" description="ทีมงานยังไม่ได้เผยแพร่อีเว้นสำหรับค้นหารูป" />}</div></div></section>;
+  const readyCount = visiblePhotoEvents.filter((event) => photoEventDisplayStatus(event, state) === 'ready').length;
+  return <section className="page-section photo-page"><div className="container"><div className="page-hero photo-event-index-hero"><div className="eyebrow"><span className="eyebrow-line" /> PHOTO MATCH</div><h1>เลือกอีเว้นก่อน<br /><span>แล้วค่อยเจอภาพของคุณ</span></h1><p>ดูรายการ Photo Event ทั้งหมด พร้อมสถานะว่าลงรูปแล้วหรือยัง จากนั้นเลือกอีเว้นเพื่อค้นหาคู่แข่งขัน</p></div><div className="photo-event-stats"><div><strong>{visiblePhotoEvents.length}</strong><span>อีเว้นที่เปิดให้ค้นหา</span></div><div><strong>{readyCount}</strong><span>อีเว้นที่ลงรูปแล้ว</span></div><div><strong>{state.photos.length}</strong><span>ภาพในระบบตอนนี้</span></div></div><div className="photo-event-grid">{visiblePhotoEvents.map((event) => <PhotoEventCard key={event.id} event={event} state={state} onSelect={() => onSelect(event.id)} />)}{visiblePhotoEvents.length === 0 && <EmptyState title="ยังไม่มี Photo Event" description="ทีมงานยังไม่ได้เผยแพร่อีเว้นสำหรับค้นหารูป" />}</div></div></section>;
 }
 
 function PhotoEventCard({ event, state, onSelect }: { event: PhotoEvent; state: ReturnType<typeof loadState>; onSelect: () => void }) {
-  const status = photoUploadStatus(event, state.photos);
+  const status = photoEventDisplayStatus(event, state);
+  const linkedPairs = state.matchPairs.filter((pair) => pair.photoEventId === event.id && photoSourcesForPair(pair, state.teams, event.id).length > 0).length;
   const photoCount = state.photos.filter((photo) => photo.photoEventId === event.id).length;
-  const linkedTeams = state.teams.filter((team) => event.teamSlugs.includes(team.slug) && photoSourceForTeam(team.photoSources, event.id)).length;
-  return <article className="photo-event-card"><div className="photo-event-card-cover" style={{ backgroundImage: `url(${event.cover})` }}><span className="soft-chip cyan">PHOTO EVENT</span><span className={`event-status-chip ${photoUploadStatusTone(status)}`}><i /> {photoUploadStatusLabel(status)}</span></div><div className="photo-event-card-body"><div className="photo-event-card-meta"><span><Icon name="calendar" /> {event.dateLabel}</span><span><Icon name="camera" /> {photoCount} ภาพ</span></div><h2>{event.title}</h2><p><Icon name="settings" /> {event.location}</p><div className="photo-event-card-footer"><span>{linkedTeams > 0 ? `${linkedTeams} ทีมมี Google source` : 'ค้นหาทีมจากอีเว้นนี้'}</span><button className="button primary" onClick={onSelect}>เลือกอีเว้น <Icon name="arrow" /></button></div></div></article>;
+  return <article className="photo-event-card"><div className="photo-event-card-cover" style={{ backgroundImage: `url(${event.cover})` }}><span className="soft-chip cyan">PHOTO EVENT</span><span className={`event-status-chip ${photoUploadStatusTone(status)}`}><i /> {photoUploadStatusLabel(status)}</span></div><div className="photo-event-card-body"><div className="photo-event-card-meta"><span><Icon name="calendar" /> {event.dateLabel}</span><span><Icon name="camera" /> {photoCount} ภาพ</span></div><h2>{event.title}</h2><p><Icon name="settings" /> {event.location}</p><div className="photo-event-card-footer"><span>{linkedPairs > 0 ? `${linkedPairs} คู่มีแหล่งรูป` : 'ค้นหาคู่แข่งขันจากอีเว้นนี้'}</span><button className="button primary" onClick={onSelect}>เลือกอีเว้น <Icon name="arrow" /></button></div></div></article>;
 }
 
 function PhotoSourceLink({ source, label = 'ดูรูปเต็มได้ที่นี่', className = 'photo-source-link' }: { source: PhotoSource; label?: string; className?: string }) {
   return <a className={className} href={source.url} target="_blank" rel="noreferrer" aria-label={`${label} (${photoProviderLabel(source.provider)})`}>{label} <Icon name="external" /></a>;
 }
 
-function TeamPhotoEmpty({ source }: { source?: ReturnType<typeof photoSourceForTeam> }) {
-  return <div className="team-photo-empty"><div className="match-empty-icon"><Icon name="camera" /></div><h3>{source ? 'มีแหล่งรูปแล้ว แต่ยังไม่มีตัวอย่างรูป' : 'ยังไม่มีรูปของทีมนี้ในอีเว้นนี้'}</h3><p>{source ? 'ระบบจะแสดงตัวอย่างสูงสุด 6 รูปแรกเมื่อมีรูปที่ sync เข้ามา ส่วนรูปเต็มเปิดจากลิงก์ด้านบนได้เลย' : 'ลองเลือกทีมอื่น หรือกลับไปเลือก Photo Event ที่ลงรูปแล้ว'}</p>{source && <PhotoSourceLink source={source} label="ดูรูปเต็มได้ที่นี่" className="button ghost" />}</div>;
-}
 
-function TeamRow({ team, selected, onClick }: { team: Team; selected: boolean; onClick: () => void }) {
-  return <button className={`team-row ${selected ? 'selected' : ''}`} onClick={onClick}><img src={team.logo} alt="" /><span className="team-initials" style={{ color: team.color, borderColor: `${team.color}55` }}>{team.shortName}</span><span className="team-copy"><strong>{team.name}</strong><small>{team.city} · {team.category}</small></span><span className="team-count">{team.photoCount} ภาพ</span><Icon name="arrow" /></button>;
-}
-
-function PhotoLightbox({ photo, team, onClose }: { photo: PhotoAsset; team: Team | null; onClose: () => void }) {
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><div className="photo-lightbox" role="dialog" aria-modal="true" aria-label="ดูภาพการแข่งขัน"><button className="modal-close" onClick={onClose} aria-label="ปิด"><Icon name="close" /></button><img src={photo.image} alt={team ? `${team.name} ${photo.label}` : photo.label} /><div className="lightbox-caption"><strong>{team?.name}</strong><span>{photo.label} · {photo.capturedAt}</span></div></div></div>;
-}
-
-function AdminPage({ state, unlocked, onUnlock, onAddEvent, onPublish, onUpdateTeamPhotoSource, onAddMatchPair, onUpdateSchedule }: { state: ReturnType<typeof loadState>; unlocked: boolean; onUnlock: () => void; onAddEvent: (draft: EventDraft, cover: string) => void; onPublish: (eventId: string) => void; onUpdateTeamPhotoSource: (teamId: string, eventId: string, provider: PhotoProvider, url: string) => void; onAddMatchPair: (photoEventId: string, teamAName: string, teamBName: string) => string | undefined; onUpdateSchedule: (eventId: string, startsAt: string, endsAt: string) => void }) {
+function AdminPage({ state, unlocked, onUnlock, onAddEvent, onPublish, onUpdateMatchPairPhotoSource, onAddMatchPair, onUpdateSchedule }: { state: ReturnType<typeof loadState>; unlocked: boolean; onUnlock: () => void; onAddEvent: (draft: EventDraft, cover: string) => void; onPublish: (eventId: string) => void; onUpdateMatchPairPhotoSource: (pairId: string, provider: PhotoProvider, url: string) => void; onAddMatchPair: (photoEventId: string, teamAName: string, teamBName: string) => string | undefined; onUpdateSchedule: (eventId: string, startsAt: string, endsAt: string) => void }) {
   if (!unlocked) return <AdminGate onUnlock={onUnlock} />;
-  return <AdminDashboard state={state} onAddEvent={onAddEvent} onPublish={onPublish} onUpdateTeamPhotoSource={onUpdateTeamPhotoSource} onAddMatchPair={onAddMatchPair} onUpdateSchedule={onUpdateSchedule} />;
+  return <AdminDashboard state={state} onAddEvent={onAddEvent} onPublish={onPublish} onUpdateMatchPairPhotoSource={onUpdateMatchPairPhotoSource} onAddMatchPair={onAddMatchPair} onUpdateSchedule={onUpdateSchedule} />;
 }
 
 function AdminGate({ onUnlock }: { onUnlock: () => void }) {
@@ -478,7 +500,7 @@ function AdminGate({ onUnlock }: { onUnlock: () => void }) {
 
 type AdminSection = 'overview' | 'events' | 'schedule' | 'matches';
 
-function AdminDashboard({ state, onAddEvent, onPublish, onUpdateTeamPhotoSource, onAddMatchPair, onUpdateSchedule }: { state: ReturnType<typeof loadState>; onAddEvent: (draft: EventDraft, cover: string) => void; onPublish: (eventId: string) => void; onUpdateTeamPhotoSource: (teamId: string, eventId: string, provider: PhotoProvider, url: string) => void; onAddMatchPair: (photoEventId: string, teamAName: string, teamBName: string) => string | undefined; onUpdateSchedule: (eventId: string, startsAt: string, endsAt: string) => void }) {
+function AdminDashboard({ state, onAddEvent, onPublish, onUpdateMatchPairPhotoSource, onAddMatchPair, onUpdateSchedule }: { state: ReturnType<typeof loadState>; onAddEvent: (draft: EventDraft, cover: string) => void; onPublish: (eventId: string) => void; onUpdateMatchPairPhotoSource: (pairId: string, provider: PhotoProvider, url: string) => void; onAddMatchPair: (photoEventId: string, teamAName: string, teamBName: string) => string | undefined; onUpdateSchedule: (eventId: string, startsAt: string, endsAt: string) => void }) {
   const [section, setSection] = useState<AdminSection>('overview');
   const sections: Array<{ id: AdminSection; label: string; icon: 'home' | 'calendar' | 'users' }> = [
     { id: 'overview', label: 'ภาพรวม', icon: 'home' },
@@ -487,16 +509,44 @@ function AdminDashboard({ state, onAddEvent, onPublish, onUpdateTeamPhotoSource,
     { id: 'matches', label: 'คู่แข่งขันและรูป', icon: 'users' },
   ];
 
-  return <section className="page-section admin-page"><div className="container"><div className="admin-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> ADMIN WORKSPACE</div><h1>หลังบ้าน <span>PepsHub</span></h1><p>แบ่งการทำงานเป็นหมวด เพื่อจัดการได้เร็วและไม่ต้องเลื่อนหาฟอร์มยาว ๆ</p></div><span className="local-session"><span className="mode-dot" /> Local Demo session</span></div><div className="admin-stats"><AdminStat label="งานทั้งหมด" value={String(state.events.length)} /><AdminStat label="เผยแพร่แล้ว" value={String(state.events.filter((event) => event.status === 'published' || event.status === 'live').length)} /><AdminStat label="แบบร่าง" value={String(state.events.filter((event) => event.status === 'draft').length)} /><AdminStat label="Photo Event" value={String(state.photoEvents.length)} /></div><nav className="admin-tabs" aria-label="หมวดหลังบ้าน">{sections.map((item) => <button className={`admin-tab ${section === item.id ? 'active' : ''}`} type="button" key={item.id} onClick={() => setSection(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>)}</nav><div className="admin-section-content">{section === 'overview' && <AdminOverview state={state} onNavigate={setSection} />}{section === 'events' && <div className="admin-grid"><CreateEventForm onAddEvent={onAddEvent} /><EventManager events={state.events} onPublish={onPublish} /></div>}{section === 'schedule' && <ScheduleManager events={state.events} onUpdateSchedule={onUpdateSchedule} />}{section === 'matches' && <MatchSourceManager teams={state.teams} photoEvents={state.photoEvents} matchPairs={state.matchPairs} onSave={onUpdateTeamPhotoSource} onAddPair={onAddMatchPair} />}</div></div></section>;
+  return (
+    <section className="page-section admin-page">
+      <div className="container">
+        <div className="admin-heading">
+          <div>
+            <div className="eyebrow"><span className="eyebrow-line" /> ADMIN WORKSPACE</div>
+            <h1>หลังบ้าน <span>PepsHub</span></h1>
+            <p>แบ่งการทำงานเป็นหมวด เพื่อจัดการได้เร็วและไม่ต้องเลื่อนหาฟอร์มยาว ๆ</p>
+          </div>
+          <span className="local-session"><span className="mode-dot" /> Local Demo session</span>
+        </div>
+        <div className="admin-stats">
+          <AdminStat label="งานทั้งหมด" value={String(state.events.length)} />
+          <AdminStat label="เผยแพร่แล้ว" value={String(state.events.filter((event) => event.status === 'published' || event.status === 'live').length)} />
+          <AdminStat label="แบบร่าง" value={String(state.events.filter((event) => event.status === 'draft').length)} />
+          <AdminStat label="Photo Event" value={String(state.photoEvents.length)} />
+        </div>
+        <nav className="admin-tabs" aria-label="หมวดหลังบ้าน">
+          {sections.map((item) => <button className={'admin-tab ' + (section === item.id ? 'active' : '')} type="button" key={item.id} onClick={() => setSection(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>)}
+        </nav>
+        <div className="admin-section-content">
+          {section === 'overview' && <AdminOverview state={state} onNavigate={setSection} />}
+          {section === 'events' && <div className="admin-grid"><CreateEventForm onAddEvent={onAddEvent} /><EventManager events={state.events} onPublish={onPublish} /></div>}
+          {section === 'schedule' && <ScheduleManager events={state.events} onUpdateSchedule={onUpdateSchedule} />}
+          {section === 'matches' && <MatchSourceManager teams={state.teams} photoEvents={state.photoEvents} matchPairs={state.matchPairs} onSavePairSource={onUpdateMatchPairPhotoSource} onAddPair={onAddMatchPair} />}
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function AdminOverview({ state, onNavigate }: { state: ReturnType<typeof loadState>; onNavigate: (section: AdminSection) => void }) {
   const nextEvent = [...state.events].sort((a, b) => a.startsAt.localeCompare(b.startsAt))[0];
   const publishedPhotoEvents = state.photoEvents.filter((event) => event.status === 'published');
-  return <div className="admin-overview"><div className="admin-overview-banner"><div><span className="eyebrow"><span className="eyebrow-line" /> QUICK CONTROL</span><h2>วันนี้จะจัดการอะไร?</h2><p>เลือกหมวดที่ต้องการ แล้วทำงานเฉพาะส่วนได้ทันที</p></div><span className="admin-overview-badge"><Icon name="spark" /> {state.matchPairs.length} คู่แข่งขัน</span></div><div className="admin-quick-grid"><button className="admin-quick-card" type="button" onClick={() => onNavigate('events')}><span className="admin-quick-icon"><Icon name="calendar" /></span><span><strong>สร้างงานใหม่</strong><small>ใส่ Cover และเวลาเริ่ม–จบ</small></span><Icon name="arrow" /></button><button className="admin-quick-card" type="button" onClick={() => onNavigate('schedule')}><span className="admin-quick-icon cyan"><Icon name="calendar" /></span><span><strong>จัดตารางงาน</strong><small>แก้เวลาเริ่ม–จบในกระดานเดียว</small></span><Icon name="arrow" /></button><button className="admin-quick-card" type="button" onClick={() => onNavigate('matches')}><span className="admin-quick-icon purple"><Icon name="users" /></span><span><strong>เพิ่มคู่แข่งขัน</strong><small>ทีม A VS ทีม B และลิงก์รูปของแต่ละทีม</small></span><Icon name="arrow" /></button></div><div className="admin-overview-grid"><div className="admin-summary-card"><span className="eyebrow"><span className="eyebrow-line" /> NEXT ON BOARD</span><h3>{nextEvent?.title ?? 'ยังไม่มีงานในระบบ'}</h3><p>{nextEvent ? `${scheduleRange(nextEvent)} · ${nextEvent.venue}` : 'ไปที่ งานและอีเว้น เพื่อสร้างรายการแรก'}</p></div><div className="admin-summary-card"><span className="eyebrow"><span className="eyebrow-line" /> PHOTO MATCH</span><h3>{publishedPhotoEvents.length} อีเว้นพร้อมให้ค้นหา</h3><p>{state.matchPairs.length > 0 ? 'คู่แข่งขันถูกแยกตามอีเว้นแล้ว ผู้ชมจะเลือกอีเว้นก่อนค้นหาทีม' : 'เพิ่มคู่แข่งขันเพื่อเริ่มจัดกลุ่มทีมและรูป'}</p></div></div></div>;
+  return <div className="admin-overview"><div className="admin-overview-banner"><div><span className="eyebrow"><span className="eyebrow-line" /> QUICK CONTROL</span><h2>วันนี้จะจัดการอะไร?</h2><p>เลือกหมวดที่ต้องการ แล้วทำงานเฉพาะส่วนได้ทันที</p></div><span className="admin-overview-badge"><Icon name="spark" /> {state.matchPairs.length} คู่แข่งขัน</span></div><div className="admin-quick-grid"><button className="admin-quick-card" type="button" onClick={() => onNavigate('events')}><span className="admin-quick-icon"><Icon name="calendar" /></span><span><strong>สร้างงานใหม่</strong><small>ใส่ Cover และเวลาเริ่ม–จบ</small></span><Icon name="arrow" /></button><button className="admin-quick-card" type="button" onClick={() => onNavigate('schedule')}><span className="admin-quick-icon cyan"><Icon name="calendar" /></span><span><strong>จัดตารางงาน</strong><small>แก้เวลาเริ่ม–จบในกระดานเดียว</small></span><Icon name="arrow" /></button><button className="admin-quick-card" type="button" onClick={() => onNavigate('matches')}><span className="admin-quick-icon purple"><Icon name="users" /></span><span><strong>เพิ่มคู่แข่งขัน</strong><small>ทีม A VS ทีม B และลิงก์รูปของคู่นี้</small></span><Icon name="arrow" /></button></div><div className="admin-overview-grid"><div className="admin-summary-card"><span className="eyebrow"><span className="eyebrow-line" /> NEXT ON BOARD</span><h3>{nextEvent?.title ?? 'ยังไม่มีงานในระบบ'}</h3><p>{nextEvent ? `${scheduleRange(nextEvent)} · ${nextEvent.venue}` : 'ไปที่ งานและอีเว้น เพื่อสร้างรายการแรก'}</p></div><div className="admin-summary-card"><span className="eyebrow"><span className="eyebrow-line" /> PHOTO MATCH</span><h3>{publishedPhotoEvents.length} อีเว้นพร้อมให้ค้นหา</h3><p>{state.matchPairs.length > 0 ? 'คู่แข่งขันถูกแยกตามอีเว้นแล้ว ผู้ชมจะเลือกอีเว้นก่อนค้นหาคู่' : 'เพิ่มคู่แข่งขันเพื่อเริ่มจัดกลุ่มและผูกแหล่งรูป'}</p></div></div></div>;
 }
 
-function MatchSourceManager({ teams, photoEvents, matchPairs, onSave, onAddPair }: { teams: Team[]; photoEvents: PhotoEvent[]; matchPairs: MatchPair[]; onSave: (teamId: string, eventId: string, provider: PhotoProvider, url: string) => void; onAddPair: (photoEventId: string, teamAName: string, teamBName: string) => string | undefined }) {
+function MatchSourceManager({ teams, photoEvents, matchPairs, onSavePairSource, onAddPair }: { teams: Team[]; photoEvents: PhotoEvent[]; matchPairs: MatchPair[]; onSavePairSource: (pairId: string, provider: PhotoProvider, url: string) => void; onAddPair: (photoEventId: string, teamAName: string, teamBName: string) => string | undefined }) {
   const managedPhotoEvents = photoEvents;
   const [selectedEventId, setSelectedEventId] = useState(managedPhotoEvents[0]?.id ?? '');
   const [selectedPairId, setSelectedPairId] = useState(matchPairs.find((pair) => pair.photoEventId === managedPhotoEvents[0]?.id)?.id ?? '');
@@ -505,8 +555,6 @@ function MatchSourceManager({ teams, photoEvents, matchPairs, onSave, onAddPair 
   const selectedEvent = managedPhotoEvents.find((event) => event.id === selectedEventId);
   const eventPairs = matchPairs.filter((pair) => pair.photoEventId === selectedEventId);
   const selectedPair = eventPairs.find((pair) => pair.id === selectedPairId) ?? eventPairs[0];
-  const pairTeamA = selectedPair ? teams.find((team) => team.id === selectedPair.teamAId) : undefined;
-  const pairTeamB = selectedPair ? teams.find((team) => team.id === selectedPair.teamBId) : undefined;
 
   const changeEvent = (eventId: string) => {
     setSelectedEventId(eventId);
@@ -522,14 +570,65 @@ function MatchSourceManager({ teams, photoEvents, matchPairs, onSave, onAddPair 
     setTeamBName('');
   };
 
-  return <div className="team-source-manager"><div className="card-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> MATCH SOURCES</span><h2>คู่แข่งขันและแหล่งรูป</h2></div><span className="source-security-chip">Google only</span></div><p className="source-manager-intro">เพิ่มคู่ละ 2 ทีม เช่น ทีม A VS ทีม C แล้วค่อยผูก Google Drive หรือ Google Photos ให้แต่ละทีมในคู่นั้น</p><div className="match-pair-create"><div className="card-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> ADD MATCH PAIR</span><h3>เพิ่มคู่แข่งขัน</h3></div><span className="result-count">{eventPairs.length} คู่ในอีเว้นนี้</span></div><form className="match-pair-form" onSubmit={submitPair}><Field label="Photo Event"><select value={selectedEventId} onChange={(event) => changeEvent(event.target.value)}>{managedPhotoEvents.map((photoEvent) => <option key={photoEvent.id} value={photoEvent.id}>{photoEvent.title}{photoEvent.status === 'draft' ? ' · Draft' : ''}</option>)}</select></Field><Field label="ทีม A"><input list="photo-match-team-names" value={teamAName} onChange={(event) => setTeamAName(event.target.value)} placeholder="เช่น PEPS UNITED" /></Field><span className="match-pair-vs" aria-hidden="true">VS</span><Field label="ทีม B"><input list="photo-match-team-names" value={teamBName} onChange={(event) => setTeamBName(event.target.value)} placeholder="เช่น NORTH STAR FC" /></Field><button className="button primary" type="submit">เพิ่มคู่ <Icon name="users" /></button></form><small className="form-help">พิมพ์ชื่อทีมใหม่ได้เลย ระบบจะสร้างข้อมูลทีมแบบย่อเฉพาะที่ใช้ในคู่นี้ ไม่ต้องกรอกจังหวัดหรือรุ่นซ้ำ</small><datalist id="photo-match-team-names">{teams.map((team) => <option key={team.id} value={team.name} />)}</datalist></div><div className="match-pair-list"><div className="card-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> MATCH LIST</span><h3>คู่ที่มีอยู่ในอีเว้น</h3></div><span className="result-count">{eventPairs.length} คู่</span></div>{eventPairs.length > 0 ? eventPairs.map((pair) => { const teamA = teams.find((team) => team.id === pair.teamAId); const teamB = teams.find((team) => team.id === pair.teamBId); return <button className={`match-pair-row ${selectedPair?.id === pair.id ? 'selected' : ''}`} type="button" key={pair.id} onClick={() => setSelectedPairId(pair.id)}><span className="match-pair-label">{pair.label}</span><strong>{teamA?.name ?? 'ทีม A'}</strong><span className="match-pair-vs">VS</span><strong>{teamB?.name ?? 'ทีม B'}</strong><Icon name="chevron" /></button>; }) : <EmptyState title="ยังไม่มีคู่แข่งขันในอีเว้นนี้" description="ใส่ชื่อทีม A และทีม B ด้านบนเพื่อเริ่มจับคู่" />}</div>{selectedEvent && selectedPair && pairTeamA && pairTeamB ? <div className="pair-source-section"><div className="card-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> PHOTO SOURCES</span><h3>{selectedPair.label}: {pairTeamA.name} VS {pairTeamB.name}</h3></div><span className="source-security-chip">2 ทีม</span></div><p className="source-manager-intro">ใส่ลิงก์รูปของแต่ละทีมแยกกัน รูปจะถูกเรียกตาม Photo Event ที่เลือก</p><div className="pair-source-grid"><PairSourceCard team={pairTeamA} photoEvent={selectedEvent} onSave={onSave} /><PairSourceCard team={pairTeamB} photoEvent={selectedEvent} onSave={onSave} /></div></div> : <div className="pair-source-empty"><Icon name="camera" /><span>เลือกหรือเพิ่มคู่แข่งขัน เพื่อผูกแหล่งรูปของทีม A และทีม B</span></div>}</div>;
+  return (
+    <div className="team-source-manager">
+      <div className="card-heading">
+        <div><span className="eyebrow"><span className="eyebrow-line" /> MATCH SOURCES</span><h2>คู่แข่งขันและแหล่งรูป</h2></div>
+        <span className="source-security-chip">Google only</span>
+      </div>
+      <p className="source-manager-intro">เพิ่มชื่อทีม 2 ทีมเป็นคู่เดียว เช่น ทีม A VS ทีม C จากนั้นผูกลิงก์รูปของคู่นี้ได้ทั้ง Google Drive และ Google Photos</p>
+      <div className="match-pair-create">
+        <div className="card-heading">
+          <div><span className="eyebrow"><span className="eyebrow-line" /> ADD MATCH PAIR</span><h3>เพิ่มคู่แข่งขัน</h3></div>
+          <span className="result-count">{eventPairs.length} คู่ในอีเว้นนี้</span>
+        </div>
+        <form className="match-pair-form" onSubmit={submitPair}>
+          <Field label="Photo Event"><select value={selectedEventId} onChange={(event) => changeEvent(event.target.value)}>{managedPhotoEvents.map((photoEvent) => <option key={photoEvent.id} value={photoEvent.id}>{photoEvent.title}{photoEvent.status === 'draft' ? ' · Draft' : ''}</option>)}</select></Field>
+          <Field label="ทีม A"><input list="photo-match-team-names" value={teamAName} onChange={(event) => setTeamAName(event.target.value)} placeholder="เช่น PEPS UNITED" /></Field>
+          <span className="match-pair-vs" aria-hidden="true">VS</span>
+          <Field label="ทีม B"><input list="photo-match-team-names" value={teamBName} onChange={(event) => setTeamBName(event.target.value)} placeholder="เช่น RIVER CITY" /></Field>
+          <button className="button primary" type="submit">เพิ่มคู่ <Icon name="users" /></button>
+        </form>
+        <small className="form-help">กรอกเฉพาะชื่อทีมที่แข่งกัน ระบบจะสร้างคู่ที่มีลำดับให้อัตโนมัติ</small>
+        <datalist id="photo-match-team-names">{teams.map((team) => <option key={team.id} value={team.name} />)}</datalist>
+      </div>
+      <div className="match-pair-list">
+        <div className="card-heading">
+          <div><span className="eyebrow"><span className="eyebrow-line" /> MATCH LIST</span><h3>คู่ที่มีอยู่ในอีเว้น</h3></div>
+          <span className="result-count">{eventPairs.length} คู่</span>
+        </div>
+        {eventPairs.length > 0 ? eventPairs.map((pair) => <button className={'match-pair-row ' + (selectedPair?.id === pair.id ? 'selected' : '')} type="button" key={pair.id} onClick={() => setSelectedPairId(pair.id)}>
+          <span className="match-pair-label">{pair.label}</span>
+          <strong>{pairDisplayName(pair, teams)}</strong>
+          <span className="pair-source-count">{(pair.photoSources ?? []).length > 0 ? 'มีแหล่งรูป' : 'ยังไม่ผูกลิงก์'}</span>
+          <Icon name="chevron" />
+        </button>) : <EmptyState title="ยังไม่มีคู่แข่งขันในอีเว้นนี้" description="ใส่ชื่อทีม A และทีม B ด้านบนเพื่อเริ่มจับคู่" />}
+      </div>
+      {selectedEvent && selectedPair ? (
+        <div className="pair-source-section">
+          <div className="card-heading">
+            <div><span className="eyebrow"><span className="eyebrow-line" /> PHOTO SOURCES</span><h3>{selectedPair.label}: {pairDisplayName(selectedPair, teams)}</h3></div>
+            <span className="source-security-chip">ระดับคู่แข่งขัน</span>
+          </div>
+          <p className="source-manager-intro">วางลิงก์โฟลเดอร์หรืออัลบั้มของคู่นี้ ระบบจะแสดงตัวอย่างไม่เกิน 6 รูป และตั้งค่า sync อัตโนมัติไว้ให้</p>
+          <div className="pair-source-grid">
+            <PairSourceCard pair={selectedPair} provider="google-drive" source={(selectedPair.photoSources ?? []).find((item) => item.provider === 'google-drive')} onSave={onSavePairSource} />
+            <PairSourceCard pair={selectedPair} provider="google-photos" source={(selectedPair.photoSources ?? []).find((item) => item.provider === 'google-photos')} onSave={onSavePairSource} />
+          </div>
+        </div>
+      ) : <div className="pair-source-empty"><Icon name="camera" /><span>เลือกหรือเพิ่มคู่แข่งขัน เพื่อผูกลิงก์รูปของคู่นี้</span></div>}
+    </div>
+  );
 }
 
-function PairSourceCard({ team, photoEvent, onSave }: { team: Team; photoEvent: PhotoEvent; onSave: (teamId: string, eventId: string, provider: PhotoProvider, url: string) => void }) {
-  const currentSource = photoSourceForTeam(team.photoSources, photoEvent.id);
-  const [provider, setProvider] = useState<PhotoProvider>(currentSource?.provider ?? 'google-drive');
-  const [url, setUrl] = useState(currentSource?.url ?? '');
+function PairSourceCard({ pair, provider, source, onSave }: { pair: MatchPair; provider: PhotoProvider; source?: PhotoSource; onSave: (pairId: string, provider: PhotoProvider, url: string) => void }) {
+  const [url, setUrl] = useState(source?.url ?? '');
   const [error, setError] = useState('');
+  const providerLabel = photoProviderLabel(provider);
+  useEffect(() => {
+    setUrl(source?.url ?? '');
+    setError('');
+  }, [pair.id, provider, source?.url]);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const cleanedUrl = url.trim();
@@ -537,11 +636,22 @@ function PairSourceCard({ team, photoEvent, onSave }: { team: Team; photoEvent: 
       setError('ต้องเป็นลิงก์ https จาก Google Drive หรือ Google Photos');
       return;
     }
-    onSave(team.id, photoEvent.id, provider, cleanedUrl);
+    onSave(pair.id, provider, cleanedUrl);
     setUrl(cleanedUrl);
     setError('');
   };
-  return <form className="pair-source-card" onSubmit={submit}><div className="pair-source-card-head"><span className="team-initials" style={{ color: team.color, borderColor: `${team.color}55` }}>{team.shortName}</span><div><strong>{team.name}</strong><small>{team.city} · {team.category}</small></div></div><div className="form-two-col"><Field label="แหล่งรูป"><select value={provider} onChange={(event) => setProvider(event.target.value as PhotoProvider)}><option value="google-drive">Google Drive</option><option value="google-photos">Google Photos</option></select></Field><Field label="ลิงก์โฟลเดอร์ / อัลบั้ม" error={error}><input type="url" value={url} onChange={(event) => { setUrl(event.target.value); setError(''); }} placeholder="https://drive.google.com/..." /></Field></div>{currentSource && <div className="source-current"><span className="status-dot" /> ตั้งค่าแล้ว: {photoProviderLabel(currentSource.provider)}<a href={currentSource.url} target="_blank" rel="noreferrer">เปิดต้นทาง <Icon name="external" /></a></div>}<button className="button ghost wide" type="submit">บันทึกลิงก์ของ {team.shortName} <Icon name="check" /></button></form>;
+  const statusLabel = source?.syncStatus === 'ready' ? 'sync แล้ว' : source?.syncStatus === 'error' ? 'sync ไม่สำเร็จ' : source ? 'รอ sync อัตโนมัติ' : 'ยังไม่ผูกลิงก์';
+  return (
+    <form className="pair-source-card" onSubmit={submit}>
+      <div className="pair-source-card-head">
+        <span className="source-provider-mark">{provider === 'google-drive' ? 'GD' : 'GP'}</span>
+        <div><strong>{providerLabel}</strong><small>{statusLabel} · แหล่งรูปของ {pair.label}</small></div>
+      </div>
+      <Field label="ลิงก์โฟลเดอร์ / อัลบั้ม" error={error}><input type="url" value={url} onChange={(event) => { setUrl(event.target.value); setError(''); }} placeholder={provider === 'google-drive' ? 'https://drive.google.com/drive/folders/...' : 'https://photos.app.goo.gl/...'} /></Field>
+      {source && <div className="source-current"><span className="status-dot" /> {source.syncMode === 'auto' ? 'Auto sync' : 'Manual'}{source.previewUrls && source.previewUrls.length > 0 ? ' · ' + source.previewUrls.length + ' รูปตัวอย่าง' : ''}<a href={source.url} target="_blank" rel="noreferrer">เปิดต้นทาง <Icon name="external" /></a></div>}
+      <button className="button ghost wide" type="submit">{source ? 'อัปเดตลิงก์ของคู่นี้' : 'บันทึกลิงก์ของคู่นี้'} <Icon name="check" /></button>
+    </form>
+  );
 }
 
 function toDateTimeInput(value?: string): string {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createEventFromDraft, matchPairExists, photoUploadStatus, searchTeams, slugify, sortEvents, teamPhotoCount, validateEventDraft, validateImageUpload, validateImageUrl, visibleEvents } from './domain';
-import { directImageUrl, isSafePhotoSourceUrl, limitPhotoPreviews, PHOTO_PREVIEW_LIMIT } from './photoSources';
+import { directImageUrl, isSafePhotoPreviewUrl, isSafePhotoSourceUrl, limitPhotoPreviews, pairDisplayName, pairPreviewUrls, PHOTO_PREVIEW_LIMIT } from './photoSources';
 import type { EventDraft, MatchPair, PepsEvent, PhotoAsset, PhotoEvent, Team } from '../types';
 
 const teams: Team[] = [
@@ -71,12 +71,31 @@ describe('PepsHub domain logic', () => {
     expect(isSafePhotoSourceUrl('https://drive.google.com/drive/folders/folder-id')).toBe(true);
     expect(isSafePhotoSourceUrl('http://drive.google.com/drive/folders/folder-id')).toBe(false);
     expect(isSafePhotoSourceUrl('https://example.com/folder')).toBe(false);
-    expect(directImageUrl({ provider: 'google-drive', url: 'https://drive.google.com/file/d/file-id/view' })).toBe('https://drive.google.com/uc?export=view&id=file-id');
+    expect(directImageUrl({ provider: 'google-drive', url: 'https://drive.google.com/file/d/file-id/view' })).toBe('https://lh3.googleusercontent.com/d/file-id=w1200');
   });
 
   it('limits Photo Match previews to the first six items', () => {
     expect(PHOTO_PREVIEW_LIMIT).toBe(6);
     expect(limitPhotoPreviews([1, 2, 3, 4, 5, 6, 7, 8])).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
+  it('uses a single pair source and caps all external previews at six', () => {
+    const pair: MatchPair = {
+      id: 'pair-1',
+      photoEventId: 'photo-1',
+      teamAId: '1',
+      teamBId: '2',
+      label: 'คู่ที่ 1',
+      photoSources: [{
+        provider: 'google-drive',
+        url: 'https://drive.google.com/drive/folders/folder-id',
+        previewUrls: [1, 2, 3, 4, 5, 6, 7].map((id) => `https://drive.google.com/uc?export=view&id=file-${id}`),
+      }],
+    };
+    expect(pairDisplayName(pair, teams)).toBe('PEPS UNITED VS NORTH STAR FC');
+    expect(pairPreviewUrls(pair, teams, 'photo-1')).toHaveLength(6);
+    expect(isSafePhotoPreviewUrl('https://drive.google.com/uc?export=view&id=file-1')).toBe(true);
+    expect(isSafePhotoPreviewUrl('https://example.com/file-1.jpg')).toBe(false);
   });
 
   it('validates externally hosted cover image links', () => {

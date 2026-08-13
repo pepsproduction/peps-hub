@@ -246,3 +246,28 @@ button:disabled { cursor: not-allowed; opacity: .6; }
   .photo-pair-links { margin-top: 7px; flex-direction: column; align-items: flex-start; }
   .photo-preview-meta { align-items: flex-start; flex-direction: column; }
 }
+
+/* Pair-first Photo Match */
+.match-pair-row { grid-template-columns: 70px minmax(0, 1fr) auto 15px; }
+.match-pair-row strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pair-source-count { min-width: 0; overflow: hidden; color: var(--muted-2); font: 9px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.source-provider-mark { width: 35px; height: 35px; display: grid; place-items: center; flex: 0 0 auto; color: var(--cyan); border: 1px solid rgba(128, 228, 255, .3); border-radius: 8px; background: rgba(128, 228, 255, .08); font: 600 10px var(--mono); }
+.match-pair-public-row { width: 100%; min-width: 0; display: grid; grid-template-columns: 42px minmax(0, 1fr) auto 16px; align-items: center; gap: 10px; padding: 13px 9px; text-align: left; color: var(--ink); border: 1px solid transparent; border-bottom-color: var(--line); background: transparent; }
+.match-pair-public-row:hover, .match-pair-public-row.selected { border-color: rgba(185, 255, 104, .24); background: rgba(185, 255, 104, .06); }
+.match-pair-public-row .pair-order { color: var(--lime); font: 600 12px var(--mono); }
+.match-pair-public-row .team-copy { min-width: 0; }
+.match-pair-public-row .team-copy strong, .match-pair-public-row .team-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.match-pair-public-row .team-copy strong { font: 600 11px var(--space); }
+.match-pair-public-row .team-copy small { margin-top: 5px; color: var(--muted-2); font: 9px var(--mono); }
+.match-pair-public-row .team-count { color: var(--muted-2); font: 9px var(--mono); white-space: nowrap; }
+.match-pair-public-row > .icon { width: 14px; color: var(--muted); }
+.photo-tile { min-width: 0; }
+
+@media (max-width: 640px) {
+  .match-pair-row { grid-template-columns: 51px minmax(0, 1fr) auto 14px; gap: 6px; }
+  .match-pair-row strong { font-size: 10px; }
+  .pair-source-count { max-width: 76px; }
+  .match-pair-public-row { grid-template-columns: 34px minmax(0, 1fr) auto 14px; gap: 6px; padding-inline: 5px; }
+  .match-pair-public-row .team-copy strong { font-size: 10px; }
+  .match-pair-public-row .team-count { font-size: 8px; }
+}
