@@ -1,0 +1,33 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function admin() {
+      return signedIn() && request.auth.token.admin == true;
+    }
+
+    function validImage() {
+      return request.resource != null
+        && request.resource.contentType.matches('image/.*')
+        && request.resource.size < 5 * 1024 * 1024;
+    }
+
+    match /covers/{eventId}/{fileName} {
+      allow read: if firestore.get(/databases/(default)/documents/events/$(eventId)).data.status in ['published', 'live', 'ended'];
+      allow write: if admin() && validImage();
+    }
+
+    match /photos/{photoEventId}/{fileName} {
+      allow read: if firestore.get(/databases/(default)/documents/photoEvents/$(photoEventId)).data.status == 'published';
+      allow write: if admin() && validImage();
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

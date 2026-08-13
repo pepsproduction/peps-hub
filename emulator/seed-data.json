@@ -1,0 +1,34 @@
+{
+  "events": [
+    {
+      "id": "event-peps-live-cup-final",
+      "slug": "peps-live-cup-final",
+      "title": "PEPS LIVE CUP · รอบชิงชนะเลิศ",
+      "kind": "live",
+      "status": "live",
+      "venue": "สนามกีฬาเฉลิมพระเกียรติฯ",
+      "startsAt": "2026-08-13T18:30:00+07:00",
+      "endsAt": "2026-08-13T21:00:00+07:00"
+    },
+    {
+      "id": "event-rising-stars-photo",
+      "slug": "rising-stars-photo-day",
+      "title": "RISING STARS · PHOTO DAY",
+      "kind": "photo",
+      "status": "published",
+      "venue": "สนามกีฬาเทศบาลเมืองนนท์",
+      "startsAt": "2026-08-10T09:00:00+07:00",
+      "endsAt": "2026-08-10T17:00:00+07:00"
+    }
+  ],
+  "teams": [
+    { "id": "team-peps-united", "slug": "peps-united", "name": "PEPS UNITED", "shortName": "PU", "city": "กรุงเทพฯ", "category": "รุ่นประชาชน", "photoCount": 4, "photoSources": [] },
+    { "id": "team-north-star", "slug": "north-star", "name": "NORTH STAR FC", "shortName": "NS", "city": "เชียงใหม่", "category": "รุ่นประชาชน", "photoCount": 3, "photoSources": [] }
+  ],
+  "photoEvents": [
+    { "id": "photo-event-rising-stars", "eventId": "event-rising-stars-photo", "title": "RISING STARS · PHOTO DAY", "status": "published", "dateKey": "2026-08-10", "location": "สนามกีฬาเทศบาลเมืองนนท์", "teamSlugs": ["peps-united", "north-star"], "photoCount": 0 }
+  ],
+  "matchPairs": [
+    { "id": "match-pair-rising-stars-1", "photoEventId": "photo-event-rising-stars", "teamAId": "team-peps-united", "teamBId": "team-north-star", "label": "คู่ที่ 1" }
+  ]
+}
