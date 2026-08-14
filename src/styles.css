@@ -605,3 +605,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .schedule-board-date { min-height: 60px; }
   .schedule-editor { padding: 17px 14px; }
 }
+
+/* Existing event editing keeps the original record and its linked Photo Match data. */
+.event-form-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 19px; }
+.event-form-actions .button { margin-top: 0; }
+.event-edit-note { display: block; padding: 10px 12px; margin: 17px 0 2px; border: 1px solid rgba(255, 113, 23, .25); border-radius: 6px; color: var(--muted); background: rgba(255, 113, 23, .06); line-height: 1.6; }
+.edit-button { width: 34px; min-width: 34px; height: 34px; display: inline-grid; place-items: center; padding: 0; color: var(--orange); border-color: rgba(255, 113, 23, .42); background: rgba(255, 113, 23, .06); }
+.edit-button:hover { color: #080808; border-color: var(--orange); background: var(--orange); }
+.edit-button .icon { width: 16px; height: 16px; }

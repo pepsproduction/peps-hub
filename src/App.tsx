@@ -13,6 +13,7 @@ import {
   photoUploadStatusTone,
   slugify,
   sortEventsByStartTime,
+  updateEventFromDraft,
   validateEventDraft,
   validateImageUpload,
   validateImageUrl,
@@ -75,7 +76,7 @@ function compactCount(value: number): string {
 
 type Notice = { tone: 'success' | 'info'; message: string } | null;
 
-function Icon({ name }: { name: 'arrow' | 'calendar' | 'camera' | 'check' | 'chevron' | 'close' | 'external' | 'home' | 'live' | 'menu' | 'play' | 'search' | 'settings' | 'spark' | 'trash' | 'users' }) {
+function Icon({ name }: { name: 'arrow' | 'calendar' | 'camera' | 'check' | 'chevron' | 'close' | 'edit' | 'external' | 'home' | 'live' | 'menu' | 'play' | 'search' | 'settings' | 'spark' | 'trash' | 'users' }) {
   const paths: Record<typeof name, string> = {
     arrow: 'M5 12h14m-6-6 6 6-6 6',
     calendar: 'M7 3v3m10-3v3M4.5 9.5h15M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z',
@@ -83,6 +84,7 @@ function Icon({ name }: { name: 'arrow' | 'calendar' | 'camera' | 'check' | 'che
     check: 'm5 12 4.5 4.5L19 7',
     chevron: 'm7 10 5 5 5-5',
     close: 'm6 6 12 12M18 6 6 18',
+    edit: 'M4 20h4L19 9l-4-4L4 16v4Zm9.5-13.5 4 4',
     external: 'M14 5h5v5m-1-4-8 8m-6 4h12a1 1 0 0 0 1-1v-7M5 5a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h7',
     home: 'm3 10 9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-9Z',
     live: 'M4 7.5a7 7 0 0 0 0 9M20 7.5a7 7 0 0 1 0 9M7.5 10.5a3 3 0 0 0 0 3M16.5 10.5a3 3 0 0 1 0 3M12 12v.01',
@@ -226,6 +228,37 @@ function App() {
     } : null;
     setState((current) => ({ ...current, events: [nextEvent, ...current.events], photoEvents: photoEvent ? [photoEvent, ...current.photoEvents] : current.photoEvents }));
     setNotice({ tone: 'success', message: 'บันทึกและเผยแพร่งานแล้ว ผู้ชมจะเห็นงานนี้บนหน้าแรกทันที' });
+  };
+
+  const updateEvent = async (eventId: string, draft: EventDraft, cover: string): Promise<boolean> => {
+    const currentEvent = state.events.find((event) => event.id === eventId);
+    if (!currentEvent) {
+      setNotice({ tone: 'info', message: 'ไม่พบงานที่ต้องการแก้ไข อาจถูกลบไปแล้ว' });
+      return false;
+    }
+
+    let persistedCover = cover || currentEvent.cover;
+    if (cover && cover !== currentEvent.cover && firebaseUser && firebaseEnabled && cover.startsWith('data:')) {
+      try {
+        persistedCover = await persistImage(cover, `covers/${currentEvent.id}/cover`);
+      } catch (error: unknown) {
+        setNotice({ tone: 'info', message: error instanceof Error ? error.message : 'อัปโหลด Cover ไป Firebase ไม่สำเร็จ' });
+        return false;
+      }
+    }
+
+    const updatedEvent = updateEventFromDraft(currentEvent, draft, persistedCover);
+    const dateLabel = new Intl.DateTimeFormat('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(updatedEvent.startsAt));
+    setState((current) => ({
+      ...current,
+      events: current.events.map((event) => event.id === eventId ? updatedEvent : event),
+      photoEvents: current.photoEvents.map((photoEvent) => photoEvent.eventId === eventId || photoEvent.id === currentEvent.photoEventId
+        ? { ...photoEvent, title: updatedEvent.title, dateLabel, location: updatedEvent.venue, cover: updatedEvent.cover }
+        : photoEvent),
+    }));
+    if (selectedEvent?.id === eventId) setSelectedEvent(updatedEvent);
+    setNotice({ tone: 'success', message: 'แก้ไขงานเดิมแล้ว ข้อมูลการเผยแพร่และคู่แข่งขันยังคงอยู่ครบ' });
+    return true;
   };
 
   const addMatchPair = (photoEventId: string, teamAName: string, teamBName: string): string | undefined => {
@@ -405,7 +438,7 @@ function App() {
       <main>
         {page === 'home' && <HomePage state={state} events={publicEvents} promoSlides={state.promoSlides} onOpenEvent={setSelectedEvent} onPhotoMatch={openPhotoMatch} />}
         {page === 'photos' && <PhotoMatchPage state={state} selectedPairId={selectedPairId} onSelectPair={setSelectedPairId} />}
-        {page === 'admin' && <AdminPage state={state} unlocked={adminUnlocked} firebaseEnabled={firebaseEnabled} firebaseUser={firebaseUser} cloudStateReady={cloudStateReady} cloudError={cloudError} authError={authError} onUnlock={unlockAdmin} onSignOut={lockAdmin} onAddEvent={addEvent} onPublish={publishEvent} onUpdateMatchPairPhotoSource={updateMatchPairPhotoSource} onAddMatchPair={addMatchPair} onUpdateSchedule={updateEventSchedule} onAddPromoSlide={addPromoSlide} onUpdatePromoSlideDuration={updatePromoSlideDuration} onRemovePromoSlide={removePromoSlide} />}
+        {page === 'admin' && <AdminPage state={state} unlocked={adminUnlocked} firebaseEnabled={firebaseEnabled} firebaseUser={firebaseUser} cloudStateReady={cloudStateReady} cloudError={cloudError} authError={authError} onUnlock={unlockAdmin} onSignOut={lockAdmin} onAddEvent={addEvent} onUpdateEvent={updateEvent} onPublish={publishEvent} onUpdateMatchPairPhotoSource={updateMatchPairPhotoSource} onAddMatchPair={addMatchPair} onUpdateSchedule={updateEventSchedule} onAddPromoSlide={addPromoSlide} onUpdatePromoSlideDuration={updatePromoSlideDuration} onRemovePromoSlide={removePromoSlide} />}
       </main>
 
       <footer className="site-footer">
@@ -692,9 +725,9 @@ function PhotoSourceLink({ source, label = 'ดูรูปเต็มได้
 }
 
 
-function AdminPage({ state, unlocked, firebaseEnabled, firebaseUser, cloudStateReady, cloudError, authError, onUnlock, onSignOut, onAddEvent, onPublish, onUpdateMatchPairPhotoSource, onAddMatchPair, onUpdateSchedule, onAddPromoSlide, onUpdatePromoSlideDuration, onRemovePromoSlide }: { state: ReturnType<typeof loadState>; unlocked: boolean; firebaseEnabled: boolean; firebaseUser: User | null; cloudStateReady: boolean; cloudError: string; authError: string; onUnlock: (email: string, password: string) => Promise<void>; onSignOut: () => Promise<void>; onAddEvent: (draft: EventDraft, cover: string) => Promise<void>; onPublish: (eventId: string) => void; onUpdateMatchPairPhotoSource: (pairId: string, provider: PhotoProvider, url: string) => void; onAddMatchPair: (photoEventId: string, teamAName: string, teamBName: string) => string | undefined; onUpdateSchedule: (eventId: string, startsAt: string, endsAt: string) => void; onAddPromoSlide: (image: string, durationSeconds: number, aspectRatio: PromoAspectRatio) => Promise<void>; onUpdatePromoSlideDuration: (slideId: string, durationSeconds: number) => void; onRemovePromoSlide: (slideId: string) => void }) {
+function AdminPage({ state, unlocked, firebaseEnabled, firebaseUser, cloudStateReady, cloudError, authError, onUnlock, onSignOut, onAddEvent, onUpdateEvent, onPublish, onUpdateMatchPairPhotoSource, onAddMatchPair, onUpdateSchedule, onAddPromoSlide, onUpdatePromoSlideDuration, onRemovePromoSlide }: { state: ReturnType<typeof loadState>; unlocked: boolean; firebaseEnabled: boolean; firebaseUser: User | null; cloudStateReady: boolean; cloudError: string; authError: string; onUnlock: (email: string, password: string) => Promise<void>; onSignOut: () => Promise<void>; onAddEvent: (draft: EventDraft, cover: string) => Promise<void>; onUpdateEvent: (eventId: string, draft: EventDraft, cover: string) => Promise<boolean>; onPublish: (eventId: string) => void; onUpdateMatchPairPhotoSource: (pairId: string, provider: PhotoProvider, url: string) => void; onAddMatchPair: (photoEventId: string, teamAName: string, teamBName: string) => string | undefined; onUpdateSchedule: (eventId: string, startsAt: string, endsAt: string) => void; onAddPromoSlide: (image: string, durationSeconds: number, aspectRatio: PromoAspectRatio) => Promise<void>; onUpdatePromoSlideDuration: (slideId: string, durationSeconds: number) => void; onRemovePromoSlide: (slideId: string) => void }) {
   if (!unlocked) return <AdminGate firebaseEnabled={firebaseEnabled} error={authError} onUnlock={onUnlock} />;
-  return <AdminDashboard state={state} firebaseUser={firebaseUser} cloudStateReady={cloudStateReady} cloudError={cloudError} onSignOut={onSignOut} onAddEvent={onAddEvent} onPublish={onPublish} onUpdateMatchPairPhotoSource={onUpdateMatchPairPhotoSource} onAddMatchPair={onAddMatchPair} onUpdateSchedule={onUpdateSchedule} onAddPromoSlide={onAddPromoSlide} onUpdatePromoSlideDuration={onUpdatePromoSlideDuration} onRemovePromoSlide={onRemovePromoSlide} />;
+  return <AdminDashboard state={state} firebaseUser={firebaseUser} cloudStateReady={cloudStateReady} cloudError={cloudError} onSignOut={onSignOut} onAddEvent={onAddEvent} onUpdateEvent={onUpdateEvent} onPublish={onPublish} onUpdateMatchPairPhotoSource={onUpdateMatchPairPhotoSource} onAddMatchPair={onAddMatchPair} onUpdateSchedule={onUpdateSchedule} onAddPromoSlide={onAddPromoSlide} onUpdatePromoSlideDuration={onUpdatePromoSlideDuration} onRemovePromoSlide={onRemovePromoSlide} />;
 }
 
 function AdminGate({ firebaseEnabled, error, onUnlock }: { firebaseEnabled: boolean; error: string; onUnlock: (email: string, password: string) => Promise<void> }) {
@@ -707,8 +740,9 @@ function AdminGate({ firebaseEnabled, error, onUnlock }: { firebaseEnabled: bool
 
 type AdminSection = 'overview' | 'events' | 'schedule' | 'matches' | 'promos';
 
-function AdminDashboard({ state, firebaseUser, cloudStateReady, cloudError, onSignOut, onAddEvent, onPublish, onUpdateMatchPairPhotoSource, onAddMatchPair, onUpdateSchedule, onAddPromoSlide, onUpdatePromoSlideDuration, onRemovePromoSlide }: { state: ReturnType<typeof loadState>; firebaseUser: User | null; cloudStateReady: boolean; cloudError: string; onSignOut: () => Promise<void>; onAddEvent: (draft: EventDraft, cover: string) => Promise<void>; onPublish: (eventId: string) => void; onUpdateMatchPairPhotoSource: (pairId: string, provider: PhotoProvider, url: string) => void; onAddMatchPair: (photoEventId: string, teamAName: string, teamBName: string) => string | undefined; onUpdateSchedule: (eventId: string, startsAt: string, endsAt: string) => void; onAddPromoSlide: (image: string, durationSeconds: number, aspectRatio: PromoAspectRatio) => Promise<void>; onUpdatePromoSlideDuration: (slideId: string, durationSeconds: number) => void; onRemovePromoSlide: (slideId: string) => void }) {
+function AdminDashboard({ state, firebaseUser, cloudStateReady, cloudError, onSignOut, onAddEvent, onUpdateEvent, onPublish, onUpdateMatchPairPhotoSource, onAddMatchPair, onUpdateSchedule, onAddPromoSlide, onUpdatePromoSlideDuration, onRemovePromoSlide }: { state: ReturnType<typeof loadState>; firebaseUser: User | null; cloudStateReady: boolean; cloudError: string; onSignOut: () => Promise<void>; onAddEvent: (draft: EventDraft, cover: string) => Promise<void>; onUpdateEvent: (eventId: string, draft: EventDraft, cover: string) => Promise<boolean>; onPublish: (eventId: string) => void; onUpdateMatchPairPhotoSource: (pairId: string, provider: PhotoProvider, url: string) => void; onAddMatchPair: (photoEventId: string, teamAName: string, teamBName: string) => string | undefined; onUpdateSchedule: (eventId: string, startsAt: string, endsAt: string) => void; onAddPromoSlide: (image: string, durationSeconds: number, aspectRatio: PromoAspectRatio) => Promise<void>; onUpdatePromoSlideDuration: (slideId: string, durationSeconds: number) => void; onRemovePromoSlide: (slideId: string) => void }) {
   const [section, setSection] = useState<AdminSection>('overview');
+  const [editingEvent, setEditingEvent] = useState<PepsEvent | null>(null);
   const sections: Array<{ id: AdminSection; label: string; icon: 'home' | 'calendar' | 'camera' | 'users' }> = [
     { id: 'overview', label: 'ภาพรวม', icon: 'home' },
     { id: 'events', label: 'งานและอีเว้น', icon: 'calendar' },
@@ -740,7 +774,7 @@ function AdminDashboard({ state, firebaseUser, cloudStateReady, cloudError, onSi
         </nav>
         <div className="admin-section-content">
           {section === 'overview' && <AdminOverview state={state} onNavigate={setSection} />}
-          {section === 'events' && <div className="admin-grid"><CreateEventForm onAddEvent={onAddEvent} /><EventManager events={state.events} onPublish={onPublish} /></div>}
+          {section === 'events' && <div className="admin-grid"><CreateEventForm editEvent={editingEvent} onAddEvent={onAddEvent} onUpdateEvent={onUpdateEvent} onCancelEdit={() => setEditingEvent(null)} /><EventManager events={state.events} onPublish={onPublish} onEdit={setEditingEvent} /></div>}
           {section === 'schedule' && <ScheduleManager events={state.events} onUpdateSchedule={onUpdateSchedule} />}
           {section === 'matches' && <MatchSourceManager teams={state.teams} photoEvents={state.photoEvents} matchPairs={state.matchPairs} onSavePairSource={onUpdateMatchPairPhotoSource} onAddPair={onAddMatchPair} />}
           {section === 'promos' && <PromoSlideManager slides={state.promoSlides} onAdd={onAddPromoSlide} onUpdateDuration={onUpdatePromoSlideDuration} onRemove={onRemovePromoSlide} />}
@@ -1012,13 +1046,36 @@ function ScheduleManager({ events, onUpdateSchedule }: { events: PepsEvent[]; on
 
 function AdminStat({ label, value }: { label: string; value: string }) { return <div className="admin-stat"><span>{label}</span><strong>{value}</strong></div>; }
 
-function CreateEventForm({ onAddEvent }: { onAddEvent: (draft: EventDraft, cover: string) => Promise<void> | void }) {
-  const [draft, setDraft] = useState<EventDraft>(EMPTY_DRAFT);
+function eventToDraft(event: PepsEvent): EventDraft {
+  return {
+    title: event.title,
+    subtitle: event.subtitle,
+    kind: event.kind,
+    venue: event.venue,
+    startsAt: toDateTimeInput(event.startsAt),
+    endsAt: toDateTimeInput(event.endsAt),
+    liveUrl: event.liveUrl ?? '',
+    tags: event.tags.join(', '),
+  };
+}
+
+function CreateEventForm({ editEvent, onAddEvent, onUpdateEvent, onCancelEdit }: { editEvent: PepsEvent | null; onAddEvent: (draft: EventDraft, cover: string) => Promise<void> | void; onUpdateEvent: (eventId: string, draft: EventDraft, cover: string) => Promise<boolean>; onCancelEdit: () => void }) {
+  const [draft, setDraft] = useState<EventDraft>(() => editEvent ? eventToDraft(editEvent) : EMPTY_DRAFT);
   const [errors, setErrors] = useState<ValidationErrors>({});
-  const [cover, setCover] = useState('');
+  const [cover, setCover] = useState(editEvent?.cover ?? '');
   const [coverError, setCoverError] = useState('');
   const [coverUrl, setCoverUrl] = useState('');
   const [coverUrlError, setCoverUrlError] = useState('');
+
+  useEffect(() => {
+    setDraft(editEvent ? eventToDraft(editEvent) : EMPTY_DRAFT);
+    setCover(editEvent?.cover ?? '');
+    setCoverUrl('');
+    setCoverError('');
+    setCoverUrlError('');
+    setErrors({});
+  }, [editEvent]);
+
   const update = <K extends keyof EventDraft>(key: K, value: EventDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -1027,7 +1084,13 @@ function CreateEventForm({ onAddEvent }: { onAddEvent: (draft: EventDraft, cover
     setErrors(nextErrors);
     setCoverUrlError(nextCoverUrlError ?? '');
     if (Object.keys(nextErrors).length > 0 || nextCoverUrlError) return;
-    await onAddEvent(draft, cover || coverUrl.trim());
+    const coverValue = cover || coverUrl.trim();
+    if (editEvent) {
+      const saved = await onUpdateEvent(editEvent.id, draft, coverValue);
+      if (saved) onCancelEdit();
+      return;
+    }
+    await onAddEvent(draft, coverValue);
     setDraft(EMPTY_DRAFT);
     setCover('');
     setCoverUrl('');
@@ -1037,16 +1100,47 @@ function CreateEventForm({ onAddEvent }: { onAddEvent: (draft: EventDraft, cover
   };
   const uploadCover = (event: ChangeEvent<HTMLInputElement>) => { const file = event.target.files?.[0]; if (!file) return; const nextError = validateImageUpload(file); setCoverError(nextError ?? ''); if (nextError) { setCover(''); return; } const reader = new FileReader(); reader.addEventListener('load', () => { setCover(typeof reader.result === 'string' ? reader.result : ''); setCoverUrl(''); setCoverUrlError(''); }); reader.readAsDataURL(file); };
   const coverPreview = cover || coverUrl;
-  return <form className="create-event-card" onSubmit={submit}><div className="card-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> NEW EVENT</span><h2>สร้างงานใหม่</h2></div><span className="draft-chip">เผยแพร่ทันที</span></div><label className="cover-upload" style={coverPreview ? { backgroundImage: `url(${coverPreview})` } : undefined}><input type="file" accept="image/*" onChange={uploadCover} /><span className="upload-overlay"><Icon name="camera" /><strong>{coverPreview ? 'เปลี่ยน Cover' : 'อัปโหลด Cover'}</strong><small>JPG, PNG ไม่เกิน 5MB</small>{coverError && <small className="upload-error">{coverError}</small>}</span></label><Field label="ลิงก์ Cover รูปภาพ" error={coverUrlError}><input type="url" value={coverUrl} onChange={(event) => { setCoverUrl(event.target.value); setCover(''); setCoverUrlError(''); }} placeholder="https://example.com/photo.jpg" /></Field><small className="form-help">วางลิงก์รูปโดยตรงจากเว็บไซต์หรือพื้นที่ฝากรูปได้ ใช้ https:// และควรเป็นลิงก์ที่เปิดเป็นรูปภาพโดยตรง</small><Field label="ชื่องาน" error={errors.title}><input value={draft.title} onChange={(event) => update('title', event.target.value)} placeholder="เช่น PEPS LIVE CUP รอบชิง" /></Field><Field label="คำอธิบาย" error={errors.subtitle}><textarea value={draft.subtitle} onChange={(event) => update('subtitle', event.target.value)} placeholder="สรุปงานสั้น ๆ ให้ผู้ชมเข้าใจ" rows={2} /></Field><div className="form-two-col"><Field label="ประเภท"><select value={draft.kind} onChange={(event) => update('kind', event.target.value as EventDraft['kind'])}><option value="live">Live Broadcast</option><option value="photo">Photo Event</option></select></Field><Field label="สถานที่" error={errors.venue}><input value={draft.venue} onChange={(event) => update('venue', event.target.value)} placeholder="ชื่อสนาม / สถานที่" /></Field></div><div className="form-two-col"><Field label="เวลาเริ่ม" error={errors.startsAt}><input type="datetime-local" value={draft.startsAt} onChange={(event) => update('startsAt', event.target.value)} /></Field><Field label="เวลาจบ" error={errors.endsAt}><input type="datetime-local" value={draft.endsAt} onChange={(event) => update('endsAt', event.target.value)} /></Field></div><Field label="Tags"><input value={draft.tags} onChange={(event) => update('tags', event.target.value)} placeholder="LIVE, ฟุตบอล" /></Field>{draft.kind === 'live' && <Field label="ลิงก์ถ่ายทอดสด" error={errors.liveUrl}><input type="url" value={draft.liveUrl} onChange={(event) => update('liveUrl', event.target.value)} placeholder="https://..." /></Field>}<button className="button primary wide" type="submit">บันทึกและเผยแพร่ <Icon name="arrow" /></button></form>;
+  return (
+    <form className="create-event-card" onSubmit={submit}>
+      <div className="card-heading">
+        <div><span className="eyebrow"><span className="eyebrow-line" /> {editEvent ? 'EDIT EVENT' : 'NEW EVENT'}</span><h2>{editEvent ? 'แก้ไขงานเดิม' : 'สร้างงานใหม่'}</h2></div>
+        <span className="draft-chip">{editEvent ? 'เก็บรายการเดิม' : 'เผยแพร่ทันที'}</span>
+      </div>
+      {editEvent && <small className="form-help event-edit-note">แก้ไขรายการเดิมได้ทันที ระบบจะคงสถานะเผยแพร่ Photo Event คู่แข่งขัน และแหล่งรูปที่ผูกไว้</small>}
+      <label className="cover-upload" style={coverPreview ? { backgroundImage: `url(${coverPreview})` } : undefined}>
+        <input type="file" accept="image/*" onChange={uploadCover} />
+        <span className="upload-overlay"><Icon name="camera" /><strong>{coverPreview ? 'เปลี่ยน Cover' : 'อัปโหลด Cover'}</strong><small>JPG, PNG ไม่เกิน 5MB</small>{coverError && <small className="upload-error">{coverError}</small>}</span>
+      </label>
+      <Field label="ลิงก์ Cover รูปภาพ" error={coverUrlError}><input type="url" value={coverUrl} onChange={(event) => { setCoverUrl(event.target.value); setCover(''); setCoverUrlError(''); }} placeholder="https://example.com/photo.jpg" /></Field>
+      <small className="form-help">วางลิงก์รูปโดยตรงจากเว็บไซต์หรือพื้นที่ฝากรูปได้ ใช้ https:// และควรเป็นลิงก์ที่เปิดเป็นรูปภาพโดยตรง</small>
+      <Field label="ชื่องาน" error={errors.title}><input value={draft.title} onChange={(event) => update('title', event.target.value)} placeholder="เช่น PEPS LIVE CUP รอบชิง" /></Field>
+      <Field label="คำอธิบาย" error={errors.subtitle}><textarea value={draft.subtitle} onChange={(event) => update('subtitle', event.target.value)} placeholder="สรุปงานสั้น ๆ ให้ผู้ชมเข้าใจ" rows={2} /></Field>
+      <div className="form-two-col">
+        <Field label="ประเภท"><select value={draft.kind} disabled={Boolean(editEvent)} onChange={(event) => update('kind', event.target.value as EventDraft['kind'])}><option value="live">Live Broadcast</option><option value="photo">Photo Event</option></select></Field>
+        <Field label="สถานที่" error={errors.venue}><input value={draft.venue} onChange={(event) => update('venue', event.target.value)} placeholder="ชื่อสนาม / สถานที่" /></Field>
+      </div>
+      {editEvent && <small className="form-help">ประเภทงานถูกล็อกไว้เพื่อป้องกันข้อมูล Photo Match ที่ผูกอยู่หายไป</small>}
+      <div className="form-two-col">
+        <Field label="เวลาเริ่ม" error={errors.startsAt}><input type="datetime-local" value={draft.startsAt} onChange={(event) => update('startsAt', event.target.value)} /></Field>
+        <Field label="เวลาจบ" error={errors.endsAt}><input type="datetime-local" value={draft.endsAt} onChange={(event) => update('endsAt', event.target.value)} /></Field>
+      </div>
+      <Field label="Tags"><input value={draft.tags} onChange={(event) => update('tags', event.target.value)} placeholder="LIVE, ฟุตบอล" /></Field>
+      {draft.kind === 'live' && <Field label="ลิงก์ถ่ายทอดสด" error={errors.liveUrl}><input type="url" value={draft.liveUrl} onChange={(event) => update('liveUrl', event.target.value)} placeholder="https://..." /></Field>}
+      <div className="event-form-actions">
+        <button className="button primary wide" type="submit">{editEvent ? 'บันทึกการแก้ไข' : 'บันทึกและเผยแพร่'} <Icon name={editEvent ? 'check' : 'arrow'} /></button>
+        {editEvent && <button className="button ghost wide" type="button" onClick={onCancelEdit}>ยกเลิกการแก้ไข <Icon name="close" /></button>}
+      </div>
+    </form>
+  );
 }
 
 function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) { return <label className={`form-field ${error ? 'has-error' : ''}`}><span>{label}</span>{children}{error && <small>{error}</small>}</label>; }
 
-function EventManager({ events, onPublish }: { events: PepsEvent[]; onPublish: (eventId: string) => void }) {
+function EventManager({ events, onPublish, onEdit }: { events: PepsEvent[]; onPublish: (eventId: string) => void; onEdit: (event: PepsEvent) => void }) {
   const requestDelete = (event: PepsEvent) => {
     if (window.confirm(`ต้องการลบงาน “${event.title}” ใช่หรือไม่? ข้อมูล Photo Event และคู่แข่งที่ผูกไว้จะถูกลบด้วย`)) onPublish(`delete:${event.id}`);
   };
-  return <div className="event-manager"><div className="card-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> EVENT MANAGER</span><h2>รายการงาน</h2></div><span className="result-count">{events.length} รายการ</span></div><div className="manager-list">{sortEventsByStartTime(events).map((event) => <div className="manager-row" key={event.id}><div className="manager-thumb" style={{ backgroundImage: `url(${event.cover})` }} /><div className="manager-copy"><strong>{event.title}</strong><span>{scheduleRange(event)} · {event.venue}</span></div><span className={`status-label ${event.status}`}>{eventStatusLabel(event.status)}</span><div className="manager-actions">{event.status === 'draft' ? <button className="small-button" type="button" onClick={() => onPublish(event.id)}>เผยแพร่</button> : <span className="verified"><Icon name="check" /></span>}<button className="small-button danger-button" type="button" onClick={() => requestDelete(event)} aria-label={`ลบงาน ${event.title}`}><Icon name="trash" /></button></div></div>)}</div></div>;
+  return <div className="event-manager"><div className="card-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> EVENT MANAGER</span><h2>รายการงาน</h2></div><span className="result-count">{events.length} รายการ</span></div><div className="manager-list">{sortEventsByStartTime(events).map((event) => <div className="manager-row" key={event.id}><div className="manager-thumb" style={{ backgroundImage: `url(${event.cover})` }} /><div className="manager-copy"><strong>{event.title}</strong><span>{scheduleRange(event)} · {event.venue}</span></div><span className={`status-label ${event.status}`}>{eventStatusLabel(event.status)}</span><div className="manager-actions">{event.status === 'draft' ? <button className="small-button" type="button" onClick={() => onPublish(event.id)}>เผยแพร่</button> : <span className="verified"><Icon name="check" /></span>}<button className="small-button edit-button" type="button" onClick={() => onEdit(event)} aria-label={`แก้ไขงาน ${event.title}`}><Icon name="edit" /></button><button className="small-button danger-button" type="button" onClick={() => requestDelete(event)} aria-label={`ลบงาน ${event.title}`}><Icon name="trash" /></button></div></div>)}</div></div>;
 }
 
 function EmptyState({ title, description }: { title: string; description: string }) { return <div className="empty-state"><span className="empty-icon"><Icon name="spark" /></span><h3>{title}</h3><p>{description}</p></div>; }

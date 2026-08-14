@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createEventFromDraft, matchPairExists, photoUploadStatus, searchTeams, slugify, sortEvents, sortEventsByStartTime, teamPhotoCount, validateEventDraft, validateImageUpload, validateImageUrl, visibleEvents } from './domain';
+import { createEventFromDraft, matchPairExists, photoUploadStatus, searchTeams, slugify, sortEvents, sortEventsByStartTime, teamPhotoCount, updateEventFromDraft, validateEventDraft, validateImageUpload, validateImageUrl, visibleEvents } from './domain';
 import { directImageUrl, isSafePhotoPreviewUrl, isSafePhotoSourceUrl, limitPhotoPreviews, pairDisplayName, pairPreviewUrls, PHOTO_PREVIEW_LIMIT } from './photoSources';
 import type { EventDraft, MatchPair, PepsEvent, PhotoAsset, PhotoEvent, Team } from '../types';
 
@@ -62,6 +62,18 @@ describe('PepsHub domain logic', () => {
     expect(created.slug).toBe('new-match');
     expect(created.tags).toEqual(['photo', 'final']);
     expect(created.endsAt).toBeTruthy();
+  });
+
+  it('updates an existing event without changing its identity or publication state', () => {
+    const original = { ...event('published-event', 'published', '2026-08-13T12:00:00+07:00'), photoEventId: 'photo-published-event' };
+    const draft: EventDraft = { title: 'Updated Match', subtitle: 'Updated description', kind: 'live', venue: 'New Arena', startsAt: '2026-08-14T15:00', endsAt: '2026-08-14T17:00', liveUrl: 'https://example.com/live', tags: 'updated, final' };
+    const updated = updateEventFromDraft(original, draft, 'new-cover');
+    expect(updated.id).toBe(original.id);
+    expect(updated.status).toBe(original.status);
+    expect(updated.photoEventId).toBe(original.photoEventId);
+    expect(updated.title).toBe('Updated Match');
+    expect(updated.cover).toBe('new-cover');
+    expect(updated.tags).toEqual(['updated', 'final']);
   });
 
   it('reports Photo Event upload status and team-specific counts', () => {

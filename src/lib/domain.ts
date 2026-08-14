@@ -143,3 +143,18 @@ export function createEventFromDraft(draft: EventDraft, index: number, cover: st
     tags: draft.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
   };
 }
+
+export function updateEventFromDraft(event: PepsEvent, draft: EventDraft, cover: string): PepsEvent {
+  return {
+    ...event,
+    slug: slugify(draft.title) || event.slug,
+    title: draft.title.trim(),
+    subtitle: draft.subtitle.trim(),
+    venue: draft.venue.trim(),
+    startsAt: new Date(draft.startsAt).toISOString(),
+    endsAt: new Date(draft.endsAt).toISOString(),
+    cover,
+    liveUrl: event.kind === 'live' && draft.liveUrl.trim() ? draft.liveUrl.trim() : undefined,
+    tags: draft.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
+  };
+}
