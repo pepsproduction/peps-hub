@@ -52,12 +52,12 @@ service cloud.firestore {
       allow write: if admin();
     }
 
-    // The app keeps one versioned state document so public pages and the admin
-    // workspace stay in sync across browsers. Public reads expose only published
-    // content because the document is the public-facing app state.
+    // The app keeps one current state document so public pages and the admin
+    // workspace stay in sync across browsers. The legacy document remains
+    // readable for older clients, but only the current document is writable.
     match /appState/{documentId} {
-      allow read: if documentId == 'pepshub';
-      allow create, update, delete: if documentId == 'pepshub' && admin();
+      allow read: if documentId in ['pepshub', 'pepshub-v2'];
+      allow create, update, delete: if documentId == 'pepshub-v2' && admin();
     }
 
     match /{document=**} {

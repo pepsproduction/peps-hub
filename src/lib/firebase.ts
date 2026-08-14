@@ -1,9 +1,9 @@
 import { getApp, getApps, initializeApp, type FirebaseApp } from 'firebase/app';
 import { connectAuthEmulator, getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, type Auth, type User } from 'firebase/auth';
-import { connectFirestoreEmulator, doc, getFirestore, onSnapshot, serverTimestamp, setDoc, type Firestore, type Unsubscribe } from 'firebase/firestore';
+import { connectFirestoreEmulator, doc, getDoc, getFirestore, onSnapshot, serverTimestamp, setDoc, type Firestore, type Unsubscribe } from 'firebase/firestore';
 import { connectStorageEmulator, getDownloadURL, getStorage, ref, uploadString, type FirebaseStorage } from 'firebase/storage';
 import type { AppState } from '../types';
-import { normalizeAppState } from './storage';
+import { normalizeAppState, recoverIncompleteCloudState } from './storage';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -44,7 +44,9 @@ if (firebaseEnabled) {
 export const auth = firebaseAuth;
 export const cloudDb = firestore;
 export const storage = firebaseStorage;
-export const cloudStateRef = firestore ? doc(firestore, 'appState', 'pepshub') : null;
+export const cloudStateRef = firestore ? doc(firestore, 'appState', 'pepshub-v2') : null;
+const legacyCloudStateRef = firestore ? doc(firestore, 'appState', 'pepshub') : null;
+export let cloudStateNeedsBootstrap = false;
 
 export function observeAuth(onUser: (user: User | null) => void): Unsubscribe {
   if (!firebaseAuth) return () => undefined;
@@ -52,15 +54,41 @@ export function observeAuth(onUser: (user: User | null) => void): Unsubscribe {
 }
 
 export function observeCloudState(onState: (state: AppState | null) => void, onError: (error: Error) => void): Unsubscribe {
-  if (!cloudStateRef) return () => undefined;
-  return onSnapshot(cloudStateRef, (snapshot) => {
-    onState(snapshot.exists() ? normalizeAppState(snapshot.data()) : null);
+  if (!cloudStateRef || !legacyCloudStateRef) return () => undefined;
+  let fallbackRequest = 0;
+  const unsubscribe = onSnapshot(cloudStateRef, (snapshot) => {
+    if (snapshot.exists()) {
+      fallbackRequest += 1;
+      cloudStateNeedsBootstrap = false;
+      onState(normalizeAppState(snapshot.data()));
+      return;
+    }
+    const requestId = ++fallbackRequest;
+    void getDoc(legacyCloudStateRef).then((legacySnapshot) => {
+      if (requestId !== fallbackRequest) return;
+      const legacyState = legacySnapshot.exists() ? normalizeAppState(legacySnapshot.data()) : null;
+      const recoveredState = legacyState ? recoverIncompleteCloudState(legacyState) : null;
+      cloudStateNeedsBootstrap = true;
+      onState(recoveredState);
+    }).catch((error: unknown) => onError(error instanceof Error ? error : new Error('อ่านข้อมูล Firebase ไม่สำเร็จ')));
   }, (error) => onError(error));
+  return () => {
+    fallbackRequest += 1;
+    unsubscribe();
+  };
 }
 
 export async function persistCloudState(state: AppState): Promise<void> {
   if (!cloudStateRef) throw new Error('Firebase ยังไม่ได้ตั้งค่า');
-  await setDoc(cloudStateRef, { ...state, updatedAt: serverTimestamp() });
+  await setDoc(cloudStateRef, {
+    events: state.events,
+    teams: state.teams,
+    photoEvents: state.photoEvents,
+    photos: state.photos,
+    matchPairs: state.matchPairs,
+    promoSlides: state.promoSlides,
+    updatedAt: serverTimestamp(),
+  });
 }
 
 export async function signInAdmin(email: string, password: string): Promise<User> {

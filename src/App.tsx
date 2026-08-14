@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import type { User } from 'firebase/auth';
 import {
@@ -17,7 +17,7 @@ import {
   validateImageUrl,
 } from './lib/domain';
 import { loadState, saveState } from './lib/storage';
-import { auth, firebaseEnabled, observeAuth, observeCloudState, persistCloudState, persistImage, signInAdmin, signOutAdmin } from './lib/firebase';
+import { auth, cloudStateNeedsBootstrap, firebaseEnabled, observeAuth, observeCloudState, persistCloudState, persistImage, signInAdmin, signOutAdmin } from './lib/firebase';
 import { directImageUrl, isSafePhotoSourceUrl, limitPhotoPreviews, pairDisplayName, pairPreviewUrls, photoProviderLabel, photoSourcesForPair } from './lib/photoSources';
 import { seedState } from './data';
 import type { EventDraft, MatchPair, Page, PhotoAsset, PhotoEvent, PhotoProvider, PhotoSource, PhotoUploadStatus, PromoAspectRatio, PromoSlide, PepsEvent, Team, ValidationErrors } from './types';
@@ -109,6 +109,8 @@ function App() {
   const [cloudStateReady, setCloudStateReady] = useState(!firebaseEnabled);
   const [authError, setAuthError] = useState('');
   const [cloudError, setCloudError] = useState('');
+  const lastCloudStateFingerprint = useRef('');
+  const cloudWriteQueue = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => saveState(state), [state]);
 
@@ -119,10 +121,16 @@ function App() {
   }), []);
 
   useEffect(() => {
+    if (firebaseUser) lastCloudStateFingerprint.current = '';
+  }, [firebaseUser]);
+
+  useEffect(() => {
     if (!firebaseEnabled) return undefined;
     setCloudStateReady(false);
     return observeCloudState((cloudState) => {
-      setState(cloudState ?? seedState);
+      const nextState = cloudState ?? seedState;
+      lastCloudStateFingerprint.current = cloudStateNeedsBootstrap ? '' : JSON.stringify(nextState);
+      setState(nextState);
       setCloudStateReady(true);
       setCloudError('');
     }, (error) => {
@@ -133,9 +141,16 @@ function App() {
 
   useEffect(() => {
     if (!firebaseEnabled || !firebaseUser || !cloudStateReady) return;
-    void persistCloudState(state).catch((error: unknown) => {
-      setCloudError(error instanceof Error ? error.message : 'บันทึกข้อมูลไป Firebase ไม่สำเร็จ');
-    });
+    const fingerprint = JSON.stringify(state);
+    if (fingerprint === lastCloudStateFingerprint.current) return;
+    lastCloudStateFingerprint.current = fingerprint;
+    cloudWriteQueue.current = cloudWriteQueue.current
+      .catch(() => undefined)
+      .then(() => persistCloudState(state))
+      .catch((error: unknown) => {
+        if (lastCloudStateFingerprint.current === fingerprint) lastCloudStateFingerprint.current = '';
+        setCloudError(error instanceof Error ? error.message : 'บันทึกข้อมูลไป Firebase ไม่สำเร็จ');
+      });
   }, [cloudStateReady, firebaseUser, state]);
 
   useEffect(() => {
@@ -194,14 +209,14 @@ function App() {
         return;
       }
     }
-    const event = { ...eventDraft, cover: persistedCover };
+    const event = { ...eventDraft, status: 'published' as const, cover: persistedCover };
     const photoEventId = draft.kind === 'photo' ? `photo-${event.id}` : undefined;
     const nextEvent = photoEventId ? { ...event, photoEventId } : event;
     const photoEvent: PhotoEvent | null = photoEventId ? {
       id: photoEventId,
       eventId: event.id,
       title: event.title,
-      status: 'draft',
+      status: 'published',
       dateLabel: new Intl.DateTimeFormat('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(event.startsAt)),
       location: event.venue,
       cover: event.cover,
@@ -209,7 +224,7 @@ function App() {
       photoCount: 0,
     } : null;
     setState((current) => ({ ...current, events: [nextEvent, ...current.events], photoEvents: photoEvent ? [photoEvent, ...current.photoEvents] : current.photoEvents }));
-    setNotice({ tone: 'success', message: 'บันทึกงานเป็นแบบร่างแล้ว ตรวจข้อมูลและกดเผยแพร่จากรายการงาน' });
+    setNotice({ tone: 'success', message: 'บันทึกและเผยแพร่งานแล้ว ผู้ชมจะเห็นงานนี้บนหน้าแรกทันที' });
   };
 
   const addMatchPair = (photoEventId: string, teamAName: string, teamBName: string): string | undefined => {
@@ -1021,7 +1036,7 @@ function CreateEventForm({ onAddEvent }: { onAddEvent: (draft: EventDraft, cover
   };
   const uploadCover = (event: ChangeEvent<HTMLInputElement>) => { const file = event.target.files?.[0]; if (!file) return; const nextError = validateImageUpload(file); setCoverError(nextError ?? ''); if (nextError) { setCover(''); return; } const reader = new FileReader(); reader.addEventListener('load', () => { setCover(typeof reader.result === 'string' ? reader.result : ''); setCoverUrl(''); setCoverUrlError(''); }); reader.readAsDataURL(file); };
   const coverPreview = cover || coverUrl;
-  return <form className="create-event-card" onSubmit={submit}><div className="card-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> NEW EVENT</span><h2>สร้างงานใหม่</h2></div><span className="draft-chip">บันทึกเป็น Draft</span></div><label className="cover-upload" style={coverPreview ? { backgroundImage: `url(${coverPreview})` } : undefined}><input type="file" accept="image/*" onChange={uploadCover} /><span className="upload-overlay"><Icon name="camera" /><strong>{coverPreview ? 'เปลี่ยน Cover' : 'อัปโหลด Cover'}</strong><small>JPG, PNG ไม่เกิน 5MB</small>{coverError && <small className="upload-error">{coverError}</small>}</span></label><Field label="ลิงก์ Cover รูปภาพ" error={coverUrlError}><input type="url" value={coverUrl} onChange={(event) => { setCoverUrl(event.target.value); setCover(''); setCoverUrlError(''); }} placeholder="https://example.com/photo.jpg" /></Field><small className="form-help">วางลิงก์รูปโดยตรงจากเว็บไซต์หรือพื้นที่ฝากรูปได้ ใช้ https:// และควรเป็นลิงก์ที่เปิดเป็นรูปภาพโดยตรง</small><Field label="ชื่องาน" error={errors.title}><input value={draft.title} onChange={(event) => update('title', event.target.value)} placeholder="เช่น PEPS LIVE CUP รอบชิง" /></Field><Field label="คำอธิบาย" error={errors.subtitle}><textarea value={draft.subtitle} onChange={(event) => update('subtitle', event.target.value)} placeholder="สรุปงานสั้น ๆ ให้ผู้ชมเข้าใจ" rows={2} /></Field><div className="form-two-col"><Field label="ประเภท"><select value={draft.kind} onChange={(event) => update('kind', event.target.value as EventDraft['kind'])}><option value="live">Live Broadcast</option><option value="photo">Photo Event</option></select></Field><Field label="สถานที่" error={errors.venue}><input value={draft.venue} onChange={(event) => update('venue', event.target.value)} placeholder="ชื่อสนาม / สถานที่" /></Field></div><div className="form-two-col"><Field label="เวลาเริ่ม" error={errors.startsAt}><input type="datetime-local" value={draft.startsAt} onChange={(event) => update('startsAt', event.target.value)} /></Field><Field label="เวลาจบ" error={errors.endsAt}><input type="datetime-local" value={draft.endsAt} onChange={(event) => update('endsAt', event.target.value)} /></Field></div><Field label="Tags"><input value={draft.tags} onChange={(event) => update('tags', event.target.value)} placeholder="LIVE, ฟุตบอล" /></Field>{draft.kind === 'live' && <Field label="ลิงก์ถ่ายทอดสด" error={errors.liveUrl}><input type="url" value={draft.liveUrl} onChange={(event) => update('liveUrl', event.target.value)} placeholder="https://..." /></Field>}<button className="button primary wide" type="submit">บันทึกเป็น Draft <Icon name="arrow" /></button></form>;
+  return <form className="create-event-card" onSubmit={submit}><div className="card-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> NEW EVENT</span><h2>สร้างงานใหม่</h2></div><span className="draft-chip">เผยแพร่ทันที</span></div><label className="cover-upload" style={coverPreview ? { backgroundImage: `url(${coverPreview})` } : undefined}><input type="file" accept="image/*" onChange={uploadCover} /><span className="upload-overlay"><Icon name="camera" /><strong>{coverPreview ? 'เปลี่ยน Cover' : 'อัปโหลด Cover'}</strong><small>JPG, PNG ไม่เกิน 5MB</small>{coverError && <small className="upload-error">{coverError}</small>}</span></label><Field label="ลิงก์ Cover รูปภาพ" error={coverUrlError}><input type="url" value={coverUrl} onChange={(event) => { setCoverUrl(event.target.value); setCover(''); setCoverUrlError(''); }} placeholder="https://example.com/photo.jpg" /></Field><small className="form-help">วางลิงก์รูปโดยตรงจากเว็บไซต์หรือพื้นที่ฝากรูปได้ ใช้ https:// และควรเป็นลิงก์ที่เปิดเป็นรูปภาพโดยตรง</small><Field label="ชื่องาน" error={errors.title}><input value={draft.title} onChange={(event) => update('title', event.target.value)} placeholder="เช่น PEPS LIVE CUP รอบชิง" /></Field><Field label="คำอธิบาย" error={errors.subtitle}><textarea value={draft.subtitle} onChange={(event) => update('subtitle', event.target.value)} placeholder="สรุปงานสั้น ๆ ให้ผู้ชมเข้าใจ" rows={2} /></Field><div className="form-two-col"><Field label="ประเภท"><select value={draft.kind} onChange={(event) => update('kind', event.target.value as EventDraft['kind'])}><option value="live">Live Broadcast</option><option value="photo">Photo Event</option></select></Field><Field label="สถานที่" error={errors.venue}><input value={draft.venue} onChange={(event) => update('venue', event.target.value)} placeholder="ชื่อสนาม / สถานที่" /></Field></div><div className="form-two-col"><Field label="เวลาเริ่ม" error={errors.startsAt}><input type="datetime-local" value={draft.startsAt} onChange={(event) => update('startsAt', event.target.value)} /></Field><Field label="เวลาจบ" error={errors.endsAt}><input type="datetime-local" value={draft.endsAt} onChange={(event) => update('endsAt', event.target.value)} /></Field></div><Field label="Tags"><input value={draft.tags} onChange={(event) => update('tags', event.target.value)} placeholder="LIVE, ฟุตบอล" /></Field>{draft.kind === 'live' && <Field label="ลิงก์ถ่ายทอดสด" error={errors.liveUrl}><input type="url" value={draft.liveUrl} onChange={(event) => update('liveUrl', event.target.value)} placeholder="https://..." /></Field>}<button className="button primary wide" type="submit">บันทึกและเผยแพร่ <Icon name="arrow" /></button></form>;
 }
 
 function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) { return <label className={`form-field ${error ? 'has-error' : ''}`}><span>{label}</span>{children}{error && <small>{error}</small>}</label>; }

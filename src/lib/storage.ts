@@ -44,13 +44,30 @@ function migrateState(state: AppState): AppState {
     return seededSources.length > 0 ? { ...pair, photoSources: seededSources } : { ...pair, photoSources: [] };
   });
   return {
-    ...state,
-    matchPairs,
-    promoSlides,
+    events: state.events,
     teams,
+    photoEvents: state.photoEvents,
     photos: state.photos
       .map((photo) => ({ ...photo, photoEventId: photo.photoEventId || fallbackPhotoEventId }))
       .filter((photo) => Boolean(photo.photoEventId)),
+    matchPairs,
+    promoSlides,
+  };
+}
+
+export function recoverIncompleteCloudState(state: AppState): AppState {
+  const hasExistingContent = state.events.length > 0
+    || state.photoEvents.length > 0
+    || state.photos.length > 0
+    || state.matchPairs.length > 0;
+  if (hasExistingContent || state.teams.length === 0) return state;
+  const seeded = cloneState(seedState);
+  return {
+    ...state,
+    events: seeded.events,
+    photoEvents: seeded.photoEvents,
+    photos: seeded.photos,
+    matchPairs: seeded.matchPairs,
   };
 }
 
