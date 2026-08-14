@@ -8,6 +8,8 @@ export type PhotoProvider = 'google-drive' | 'google-photos';
 
 export type PhotoUploadStatus = 'ready' | 'partial' | 'empty';
 
+export type PromoAspectRatio = '16:9' | '4:3' | '1:1';
+
 export interface PepsEvent {
   id: string;
   slug: string;
@@ -43,7 +45,11 @@ export interface PhotoSource {
   provider: PhotoProvider;
   url: string;
   label?: string;
+  previewUrls?: string[];
   lastSyncedAt?: string;
+  syncMode?: 'auto' | 'manual';
+  syncStatus?: 'ready' | 'pending' | 'error';
+  syncError?: string;
 }
 
 export interface PhotoAsset {
@@ -73,6 +79,14 @@ export interface MatchPair {
   teamAId: string;
   teamBId: string;
   label: string;
+  photoSources?: PhotoSource[];
+}
+
+export interface PromoSlide {
+  id: string;
+  image: string;
+  durationSeconds: number;
+  aspectRatio: PromoAspectRatio;
 }
 
 export interface AppState {
@@ -81,6 +95,7 @@ export interface AppState {
   photoEvents: PhotoEvent[];
   photos: PhotoAsset[];
   matchPairs: MatchPair[];
+  promoSlides: PromoSlide[];
 }
 
 export interface EventDraft {

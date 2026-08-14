@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createEventFromDraft, matchPairExists, photoUploadStatus, searchTeams, slugify, sortEvents, teamPhotoCount, validateEventDraft, validateImageUpload, validateImageUrl, visibleEvents } from './domain';
-import { directImageUrl, isSafePhotoSourceUrl } from './photoSources';
+import { createEventFromDraft, matchPairExists, photoUploadStatus, searchTeams, slugify, sortEvents, sortEventsByStartTime, teamPhotoCount, updateEventFromDraft, validateEventDraft, validateImageUpload, validateImageUrl, visibleEvents } from './domain';
+import { directImageUrl, isSafePhotoPreviewUrl, isSafePhotoSourceUrl, limitPhotoPreviews, pairDisplayName, pairPreviewUrls, PHOTO_PREVIEW_LIMIT } from './photoSources';
 import type { EventDraft, MatchPair, PepsEvent, PhotoAsset, PhotoEvent, Team } from '../types';
 
 const teams: Team[] = [
@@ -26,6 +26,15 @@ describe('PepsHub domain logic', () => {
     const events = [event('draft', 'draft', '2026-01-01'), event('up-next', 'published', '2026-01-01'), event('live', 'live', '2026-12-01')];
     expect(visibleEvents(events).map((item) => item.id)).toEqual(['live', 'up-next']);
     expect(sortEvents(events).map((item) => item.id)).toEqual(['live', 'up-next', 'draft']);
+  });
+
+  it('orders schedules by start date instead of creation order', () => {
+    const events = [
+      event('created-first', 'published', '2026-08-16T18:00:00+07:00'),
+      event('nearest', 'published', '2026-08-14T09:00:00+07:00'),
+      event('middle', 'published', '2026-08-15T12:00:00+07:00'),
+    ];
+    expect(sortEventsByStartTime(events).map((item) => item.id)).toEqual(['nearest', 'middle', 'created-first']);
   });
 
   it('requires the minimum event fields and validates live URLs', () => {
@@ -55,6 +64,18 @@ describe('PepsHub domain logic', () => {
     expect(created.endsAt).toBeTruthy();
   });
 
+  it('updates an existing event without changing its identity or publication state', () => {
+    const original = { ...event('published-event', 'published', '2026-08-13T12:00:00+07:00'), photoEventId: 'photo-published-event' };
+    const draft: EventDraft = { title: 'Updated Match', subtitle: 'Updated description', kind: 'live', venue: 'New Arena', startsAt: '2026-08-14T15:00', endsAt: '2026-08-14T17:00', liveUrl: 'https://example.com/live', tags: 'updated, final' };
+    const updated = updateEventFromDraft(original, draft, 'new-cover');
+    expect(updated.id).toBe(original.id);
+    expect(updated.status).toBe(original.status);
+    expect(updated.photoEventId).toBe(original.photoEventId);
+    expect(updated.title).toBe('Updated Match');
+    expect(updated.cover).toBe('new-cover');
+    expect(updated.tags).toEqual(['updated', 'final']);
+  });
+
   it('reports Photo Event upload status and team-specific counts', () => {
     const photoEvent: PhotoEvent = { id: 'photo-event-1', eventId: 'event-1', title: 'Photo Day', status: 'published', dateLabel: 'วันนี้', location: 'Arena', cover: '', teamSlugs: ['peps-united'], photoCount: 2 };
     const photos: PhotoAsset[] = [
@@ -71,7 +92,31 @@ describe('PepsHub domain logic', () => {
     expect(isSafePhotoSourceUrl('https://drive.google.com/drive/folders/folder-id')).toBe(true);
     expect(isSafePhotoSourceUrl('http://drive.google.com/drive/folders/folder-id')).toBe(false);
     expect(isSafePhotoSourceUrl('https://example.com/folder')).toBe(false);
-    expect(directImageUrl({ provider: 'google-drive', url: 'https://drive.google.com/file/d/file-id/view' })).toBe('https://drive.google.com/uc?export=view&id=file-id');
+    expect(directImageUrl({ provider: 'google-drive', url: 'https://drive.google.com/file/d/file-id/view' })).toBe('https://lh3.googleusercontent.com/d/file-id=w1200');
+  });
+
+  it('limits Photo Match previews to the first six items', () => {
+    expect(PHOTO_PREVIEW_LIMIT).toBe(6);
+    expect(limitPhotoPreviews([1, 2, 3, 4, 5, 6, 7, 8])).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
+  it('uses a single pair source and caps all external previews at six', () => {
+    const pair: MatchPair = {
+      id: 'pair-1',
+      photoEventId: 'photo-1',
+      teamAId: '1',
+      teamBId: '2',
+      label: 'คู่ที่ 1',
+      photoSources: [{
+        provider: 'google-drive',
+        url: 'https://drive.google.com/drive/folders/folder-id',
+        previewUrls: [1, 2, 3, 4, 5, 6, 7].map((id) => `https://drive.google.com/uc?export=view&id=file-${id}`),
+      }],
+    };
+    expect(pairDisplayName(pair, teams)).toBe('PEPS UNITED VS NORTH STAR FC');
+    expect(pairPreviewUrls(pair, teams, 'photo-1')).toHaveLength(6);
+    expect(isSafePhotoPreviewUrl('https://drive.google.com/uc?export=view&id=file-1')).toBe(true);
+    expect(isSafePhotoPreviewUrl('https://example.com/file-1.jpg')).toBe(false);
   });
 
   it('validates externally hosted cover image links', () => {

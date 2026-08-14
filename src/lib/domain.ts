@@ -26,6 +26,14 @@ export function sortEvents(events: PepsEvent[]): PepsEvent[] {
   return [...events].sort((a, b) => statusWeight[a.status] - statusWeight[b.status] || a.startsAt.localeCompare(b.startsAt));
 }
 
+export function sortEventsByStartTime(events: PepsEvent[]): PepsEvent[] {
+  const timestamp = (value: string): number => {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+  };
+  return [...events].sort((a, b) => timestamp(a.startsAt) - timestamp(b.startsAt) || a.id.localeCompare(b.id));
+}
+
 export function visibleEvents(events: PepsEvent[]): PepsEvent[] {
   return sortEvents(events.filter((event) => event.status === 'live' || event.status === 'published'));
 }
@@ -132,6 +140,21 @@ export function createEventFromDraft(draft: EventDraft, index: number, cover: st
     cover,
     accent: draft.kind === 'live' ? '#a6ff5b' : '#76d7ff',
     liveUrl: draft.kind === 'live' && draft.liveUrl.trim() ? draft.liveUrl.trim() : undefined,
+    tags: draft.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
+  };
+}
+
+export function updateEventFromDraft(event: PepsEvent, draft: EventDraft, cover: string): PepsEvent {
+  return {
+    ...event,
+    slug: slugify(draft.title) || event.slug,
+    title: draft.title.trim(),
+    subtitle: draft.subtitle.trim(),
+    venue: draft.venue.trim(),
+    startsAt: new Date(draft.startsAt).toISOString(),
+    endsAt: new Date(draft.endsAt).toISOString(),
+    cover,
+    liveUrl: event.kind === 'live' && draft.liveUrl.trim() ? draft.liveUrl.trim() : undefined,
     tags: draft.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
   };
 }

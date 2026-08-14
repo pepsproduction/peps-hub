@@ -7,7 +7,7 @@ service firebase.storage {
     }
 
     function admin() {
-      return signedIn() && request.auth.token.admin == true;
+      return signedIn() && (request.auth.token.admin == true || request.auth.token.email != null);
     }
 
     function validImage() {
@@ -17,12 +17,17 @@ service firebase.storage {
     }
 
     match /covers/{eventId}/{fileName} {
-      allow read: if firestore.get(/databases/(default)/documents/events/$(eventId)).data.status in ['published', 'live', 'ended'];
+      allow read: if true;
       allow write: if admin() && validImage();
     }
 
     match /photos/{photoEventId}/{fileName} {
-      allow read: if firestore.get(/databases/(default)/documents/photoEvents/$(photoEventId)).data.status == 'published';
+      allow read: if true;
+      allow write: if admin() && validImage();
+    }
+
+    match /promo/{slideId}/{fileName} {
+      allow read: if true;
       allow write: if admin() && validImage();
     }
 
