@@ -643,7 +643,7 @@ function AdminPage({ state, unlocked, firebaseEnabled, firebaseUser, cloudStateR
 }
 
 function AdminGate({ firebaseEnabled, error, onUnlock }: { firebaseEnabled: boolean; error: string; onUnlock: (email: string, password: string) => Promise<void> }) {
-  const [email, setEmail] = useState('admin@pepshub.local');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const submit = async (event: FormEvent) => { event.preventDefault(); if (!email.trim() || !password.trim()) return; setBusy(true); await onUnlock(email, password); setBusy(false); };
