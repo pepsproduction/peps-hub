@@ -15,7 +15,6 @@ import {
   validateEventDraft,
   validateImageUpload,
   validateImageUrl,
-  visibleEvents,
 } from './lib/domain';
 import { loadState, saveState } from './lib/storage';
 import { auth, firebaseEnabled, observeAuth, observeCloudState, persistCloudState, persistImage, signInAdmin, signOutAdmin } from './lib/firebase';
@@ -60,9 +59,22 @@ const PROMO_RATIOS: Array<{ value: PromoAspectRatio; label: string }> = [
   { value: '1:1', label: 'Square 1:1' },
 ];
 
+function isPastEvent(event: PepsEvent, now = Date.now()): boolean {
+  if (event.status === 'ended') return true;
+  if (event.status === 'draft' || !event.endsAt) return false;
+  const endsAt = new Date(event.endsAt).getTime();
+  return Number.isFinite(endsAt) && endsAt < now;
+}
+
+function compactCount(value: number): string {
+  if (value < 1000) return String(value);
+  const compact = value / 1000;
+  return `${compact.toFixed(compact >= 10 ? 0 : 1).replace(/\.0$/, '')}k`;
+}
+
 type Notice = { tone: 'success' | 'info'; message: string } | null;
 
-function Icon({ name }: { name: 'arrow' | 'calendar' | 'camera' | 'check' | 'chevron' | 'close' | 'external' | 'home' | 'live' | 'menu' | 'play' | 'search' | 'settings' | 'spark' | 'users' }) {
+function Icon({ name }: { name: 'arrow' | 'calendar' | 'camera' | 'check' | 'chevron' | 'close' | 'external' | 'home' | 'live' | 'menu' | 'play' | 'search' | 'settings' | 'spark' | 'trash' | 'users' }) {
   const paths: Record<typeof name, string> = {
     arrow: 'M5 12h14m-6-6 6 6-6 6',
     calendar: 'M7 3v3m10-3v3M4.5 9.5h15M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z',
@@ -78,6 +90,7 @@ function Icon({ name }: { name: 'arrow' | 'calendar' | 'camera' | 'check' | 'che
     search: 'm20 20-4.5-4.5m2-5.5a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z',
     settings: 'M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm0-5 1 .2.5 2 1.6.7 1.8-.9 1.5 1.5.7 1.8-.9.7 1.6.5 2 1 0 1-2 .5-.7 1.6.9 1.8-1.5.7-1.5-1.5-1.6.7-.5 2-1 .2-1-.2-.5-2-1.6-.7-1.5 1.5-1.8-.7.9-1.8-.7-1.6-2-.5v-1l2-.5.7-1.6-.9-1.8 1.8-.7 1.5 1.5 1.6-.7.5-2 1-.2Z',
     spark: 'm12 3 1.4 5.6L19 10l-5.6 1.4L12 17l-1.4-5.6L5 10l5.6-1.4L12 3Zm7 13 .5 2.5L22 19l-2.5.5L19 22l-.5-2.5L16 19l2.5-.5L19 16Z',
+    trash: 'M5 7h14m-9 4v5m4-5v5M9 7V4h6v3m-8 0 .7 13h8.6L17 7',
     users: 'M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 18.5V20m6-9a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm5-6.5a3.5 3.5 0 0 1 0 6.8m1 3.7h.5A3.5 3.5 0 0 1 20 18.5V20',
   };
 
@@ -142,7 +155,26 @@ function App() {
     navigate('photos');
   };
 
+  const deleteEvent = (eventId: string) => {
+    const event = state.events.find((item) => item.id === eventId);
+    if (!event) return;
+    const linkedPhotoEventIds = new Set(state.photoEvents.filter((item) => item.eventId === eventId).map((item) => item.id));
+    setState((current) => ({
+      ...current,
+      events: current.events.filter((item) => item.id !== eventId),
+      photoEvents: current.photoEvents.filter((item) => item.eventId !== eventId),
+      photos: current.photos.filter((item) => !linkedPhotoEventIds.has(item.photoEventId)),
+      matchPairs: current.matchPairs.filter((item) => !linkedPhotoEventIds.has(item.photoEventId)),
+    }));
+    if (selectedEvent?.id === eventId) setSelectedEvent(null);
+    setNotice({ tone: 'success', message: `ลบงาน ${event.title} และข้อมูลที่เกี่ยวข้องแล้ว` });
+  };
+
   const publishEvent = (eventId: string) => {
+    if (eventId.startsWith('delete:')) {
+      deleteEvent(eventId.slice('delete:'.length));
+      return;
+    }
     setState((current) => ({
       ...current,
       events: current.events.map((event) => event.id === eventId ? { ...event, status: 'published' } : event),
@@ -331,8 +363,7 @@ function App() {
     setAdminUnlocked(false);
   };
 
-  const publicEvents = visibleEvents(state.events);
-  const liveCount = state.events.filter((event) => event.status === 'live').length;
+  const publicEvents = state.events.filter((event) => event.status !== 'draft');
 
   return (
     <div className="app-shell">
@@ -356,7 +387,7 @@ function App() {
       </header>
 
       <main>
-        {page === 'home' && <HomePage events={publicEvents} liveCount={liveCount} promoSlides={state.promoSlides} onOpenEvent={setSelectedEvent} onPhotoMatch={openPhotoMatch} />}
+        {page === 'home' && <HomePage state={state} events={publicEvents} promoSlides={state.promoSlides} onOpenEvent={setSelectedEvent} onPhotoMatch={openPhotoMatch} />}
         {page === 'photos' && <PhotoMatchPage state={state} selectedPairId={selectedPairId} onSelectPair={setSelectedPairId} />}
         {page === 'admin' && <AdminPage state={state} unlocked={adminUnlocked} firebaseEnabled={firebaseEnabled} firebaseUser={firebaseUser} cloudStateReady={cloudStateReady} cloudError={cloudError} authError={authError} onUnlock={unlockAdmin} onSignOut={lockAdmin} onAddEvent={addEvent} onPublish={publishEvent} onUpdateMatchPairPhotoSource={updateMatchPairPhotoSource} onAddMatchPair={addMatchPair} onUpdateSchedule={updateEventSchedule} onAddPromoSlide={addPromoSlide} onUpdatePromoSlideDuration={updatePromoSlideDuration} onRemovePromoSlide={removePromoSlide} />}
       </main>
@@ -374,10 +405,13 @@ function App() {
   );
 }
 
-function HomePage({ events, liveCount, promoSlides, onOpenEvent, onPhotoMatch }: { events: PepsEvent[]; liveCount: number; promoSlides: PromoSlide[]; onOpenEvent: (event: PepsEvent) => void; onPhotoMatch: (teamSlug?: string) => void }) {
-  const liveEvents = events.filter((event) => event.status === 'live');
-  const scheduleEvents = events.filter((event) => event.status !== 'live' && event.kind === 'live');
+function HomePage({ state, events, promoSlides, onOpenEvent, onPhotoMatch }: { state: ReturnType<typeof loadState>; events: PepsEvent[]; promoSlides: PromoSlide[]; onOpenEvent: (event: PepsEvent) => void; onPhotoMatch: (teamSlug?: string) => void }) {
+  const liveEvents = events.filter((event) => event.status === 'live' && !isPastEvent(event));
+  const pastEvents = events.filter((event) => isPastEvent(event));
+  const scheduleEvents = events.filter((event) => event.status !== 'live' && event.kind === 'live' && !isPastEvent(event));
   const photoEvent = events.find((event) => event.kind === 'photo');
+  const linkedPreviewCount = new Set(state.matchPairs.flatMap((pair) => pairPreviewUrls(pair, state.teams, pair.photoEventId))).size;
+  const availablePhotoCount = state.photos.length + linkedPreviewCount;
 
   return (
     <>
@@ -396,7 +430,7 @@ function HomePage({ events, liveCount, promoSlides, onOpenEvent, onPhotoMatch }:
         </div>
       </section>
 
-      <section className="stats-strip"><div className="container stats-grid"><Stat label="รายการทั้งหมด" value="12" suffix="งาน" icon="calendar" /><Stat label="กำลัง Live" value={String(liveCount).padStart(2, '0')} suffix="ตอนนี้" icon="live" accent /><Stat label="ทีมที่ค้นหาได้" value="48" suffix="ทีม" icon="users" /><Stat label="ภาพพร้อมส่งต่อ" value="2.4k" suffix="ภาพ" icon="camera" /></div></section>
+      <section className="stats-strip"><div className="container stats-grid"><Stat label="รายการทั้งหมด" value={String(events.length)} suffix="งาน" icon="calendar" /><Stat label="กำลัง Live" value={String(liveEvents.length)} suffix="ตอนนี้" icon="live" accent /><Stat label="ทีมที่ค้นหาได้" value={String(state.teams.length)} suffix="ทีม" icon="users" /><Stat label="ภาพพร้อมส่งต่อ" value={compactCount(availablePhotoCount)} suffix="ภาพ" icon="camera" /></div></section>
 
       <section className="section container" id="schedule">
         <SectionHeading eyebrow="ON AIR NOW" title="กำลังเกิดขึ้น" description="เลือกดูการแข่งขันที่กำลังถ่ายทอดสดได้จากตรงนี้" action={liveEvents.length > 0 ? 'ดูทั้งหมด' : undefined} />
@@ -405,7 +439,9 @@ function HomePage({ events, liveCount, promoSlides, onOpenEvent, onPhotoMatch }:
 
       <section className="section section-muted"><div className="container"><SectionHeading eyebrow="UP NEXT" title="ตารางงานถัดไป" description="วางแผนชมการแข่งขันครั้งต่อไปของคุณ" /><div className="schedule-list">{scheduleEvents.map((event) => <ScheduleRow key={event.id} event={event} onOpen={() => onOpenEvent(event)} />)}{scheduleEvents.length === 0 && <EmptyState title="ยังไม่มีงานถัดไป" description="ทีมงานกำลังอัปเดตตารางการแข่งขัน" />}</div></div></section>
 
-      {photoEvent && <section className="photo-cta-section"><div className="container photo-cta"><div className="photo-cta-copy"><div className="eyebrow"><span className="eyebrow-line" /> FIND YOUR MOMENT</div><h2>ภาพของทีมคุณ<br /><span>อยู่ตรงนี้</span></h2><p>ไม่ต้องไล่ดูทีละภาพ แค่พิมพ์ชื่อทีม แล้วเจอโมเมนต์ของคุณในไม่กี่วินาที</p><button className="button light" onClick={() => onPhotoMatch()}><Icon name="search" /> เปิด Photo Match <Icon name="arrow" /></button></div><div className="photo-collage"><div className="collage-photo tall" style={{ backgroundImage: `url(${photoEvent.cover})` }} /><div className="collage-photo small-one" style={{ backgroundImage: `url(${photoEvent.cover})` }} /><div className="collage-note"><Icon name="spark" /><strong>2.4k+</strong><span>ภาพที่พร้อมให้ค้นหา</span></div></div></div></section>}
+      <section className="section past-events-section"><div className="container"><SectionHeading eyebrow="ARCHIVE" title="งานที่ผ่านไปแล้ว" description="ย้อนกลับมาดูรายละเอียดงานและช่วงเวลาที่ผ่านมาได้ทุกเมื่อ" /><div className="event-grid past-grid">{pastEvents.map((event) => <EventCard key={event.id} event={event} onOpen={() => onOpenEvent(event)} onPhotoMatch={onPhotoMatch} />)}{pastEvents.length === 0 && <EmptyState title="ยังไม่มีงานที่ผ่านมา" description="เมื่อมีงานที่จบแล้ว รายการจะปรากฏที่หน้านี้" />}</div></div></section>
+
+      {photoEvent && <section className="photo-cta-section"><div className="container photo-cta"><div className="photo-cta-copy"><div className="eyebrow"><span className="eyebrow-line" /> FIND YOUR MOMENT</div><h2>ภาพของทีมคุณ<br /><span>อยู่ตรงนี้</span></h2><p>ไม่ต้องไล่ดูทีละภาพ แค่พิมพ์ชื่อทีม แล้วเจอโมเมนต์ของคุณในไม่กี่วินาที</p><button className="button light" onClick={() => onPhotoMatch()}><Icon name="search" /> เปิด Photo Match <Icon name="arrow" /></button></div><div className="photo-collage"><div className="collage-photo tall" style={{ backgroundImage: `url(${photoEvent.cover})` }} /><div className="collage-photo small-one" style={{ backgroundImage: `url(${photoEvent.cover})` }} /><div className="collage-note"><Icon name="spark" /><strong>{compactCount(availablePhotoCount)}</strong><span>ภาพที่พร้อมให้ค้นหา</span></div></div></div></section>}
     </>
   );
 }
@@ -454,9 +490,12 @@ function SectionHeading({ eyebrow, title, description, action }: { eyebrow: stri
 
 function EventCard({ event, onOpen, onPhotoMatch, featured = false }: { event: PepsEvent; onOpen: () => void; onPhotoMatch: (teamSlug?: string) => void; featured?: boolean }) {
   const isPhoto = event.kind === 'photo';
+  const isPast = isPastEvent(event);
+  const isLiveNow = event.status === 'live' && !isPast;
+  const statusLabel = isPast ? 'จบแล้ว' : eventStatusLabel(event.status);
   return <article className={`event-card ${featured ? 'featured' : ''}`}>
-    <div className="event-cover" style={{ backgroundImage: `url(${event.cover})` }}><div className="cover-shade" /><div className="event-cover-top"><span className={`type-chip ${event.status === 'live' ? 'live' : ''}`}>{event.status === 'live' && <i />}{eventKindLabel(event.kind)}</span><span className="cover-menu">•••</span></div>{event.status === 'live' && <div className="equalizer"><i /><i /><i /><i /><i /></div>}</div>
-    <div className="event-body"><div className="event-meta"><span><Icon name="calendar" /> {formatEventDate(event.startsAt)}</span><span><Icon name="settings" /> {eventStatusLabel(event.status)}</span></div><h3>{event.title}</h3><p>{event.subtitle}</p><div className="event-footer"><span className="venue">{event.venue}</span><button className="round-button" onClick={isPhoto ? () => onPhotoMatch() : onOpen} aria-label={isPhoto ? 'เปิด Photo Match' : 'ดู Live'}>{isPhoto ? <Icon name="camera" /> : <Icon name="play" />}</button></div></div>
+    <div className="event-cover" style={{ backgroundImage: `url(${event.cover})` }}><div className="cover-shade" /><div className="event-cover-top"><span className={`type-chip ${isLiveNow ? 'live' : ''}`}>{isLiveNow && <i />}{isPast ? 'PAST EVENT' : eventKindLabel(event.kind)}</span><span className="cover-menu">•••</span></div>{isLiveNow && <div className="equalizer"><i /><i /><i /><i /><i /></div>}</div>
+    <div className="event-body"><div className="event-meta"><span><Icon name="calendar" /> {formatEventDate(event.startsAt)}</span><span><Icon name="settings" /> {statusLabel}</span></div><h3>{event.title}</h3><p>{event.subtitle}</p><div className="event-footer"><span className="venue">{event.venue}</span><button className="round-button" onClick={isPhoto ? () => onPhotoMatch() : onOpen} aria-label={isPhoto ? 'เปิด Photo Match' : isPast ? 'ดูรายละเอียดงานย้อนหลัง' : 'ดู Live'}>{isPhoto ? <Icon name="camera" /> : <Icon name="play" />}</button></div></div>
   </article>;
 }
 
@@ -931,7 +970,28 @@ function ScheduleManager({ events, onUpdateSchedule }: { events: PepsEvent[]; on
     setError('');
   };
 
-  return <section className="schedule-manager"><div className="card-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> SCHEDULE BOARD</span><h2>ตารางงาน</h2></div><span className="result-count">{scheduleEvents.length} รายการ</span></div><p className="source-manager-intro">ดูและแก้ไขช่วงเวลาของงานที่จะแสดงบนตารางหน้าเว็บได้จากจุดเดียว</p><div className="schedule-layout"><div className="schedule-board-list">{scheduleEvents.map((event) => <button className={`schedule-board-row ${event.id === selectedEvent?.id ? 'selected' : ''}`} key={event.id} onClick={() => chooseEvent(event)}><span className="schedule-board-date"><strong>{new Intl.DateTimeFormat('th-TH', { day: '2-digit' }).format(new Date(event.startsAt))}</strong><small>{new Intl.DateTimeFormat('th-TH', { month: 'short' }).format(new Date(event.startsAt))}</small></span><span className="schedule-board-copy"><strong>{event.title}</strong><small>{scheduleRange(event)} · {event.venue}</small></span><span className={`status-label ${event.status}`}>{eventStatusLabel(event.status)}</span></button>)}{scheduleEvents.length === 0 && <EmptyState title="ยังไม่มีตารางงาน" description="สร้างงานใหม่เพื่อเพิ่มรายการลงตาราง" />}</div>{selectedEvent && <form className="schedule-editor" onSubmit={submit}><span className="soft-chip cyan">แก้ไขช่วงเวลา</span><h3>{selectedEvent.title}</h3><p>{selectedEvent.venue}</p><div className="form-two-col"><Field label="เวลาเริ่ม"><input type="datetime-local" value={startsAt} onChange={(event) => { setStartsAt(event.target.value); setError(''); }} /></Field><Field label="เวลาจบ" error={error}><input type="datetime-local" value={endsAt} onChange={(event) => { setEndsAt(event.target.value); setError(''); }} /></Field></div><button className="button primary wide" type="submit">บันทึกตารางงาน <Icon name="check" /></button></form>}</div></section>;
+  return (
+    <section className="schedule-manager">
+      <div className="card-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> SCHEDULE BOARD</span><h2>ตารางงาน</h2></div><span className="result-count">{scheduleEvents.length} รายการ</span></div>
+      <p className="source-manager-intro">เลือกงานจากรายการด้านซ้ายเพื่อดูรายละเอียด แล้วแก้ไขเวลาเริ่มและเวลาจบในแผงเดียว</p>
+      <div className="schedule-layout">
+        <div className="schedule-board-list">
+          {scheduleEvents.map((event) => <button className={`schedule-board-row ${event.id === selectedEvent?.id ? 'selected' : ''}`} key={event.id} type="button" onClick={() => chooseEvent(event)}>
+            <span className="schedule-board-date"><strong>{new Intl.DateTimeFormat('th-TH', { day: '2-digit' }).format(new Date(event.startsAt))}</strong><small>{new Intl.DateTimeFormat('th-TH', { month: 'short' }).format(new Date(event.startsAt))}</small></span>
+            <span className="schedule-board-copy"><strong>{event.title}</strong><small>{scheduleRange(event)} · {event.venue}</small></span>
+            <span className={`status-label ${event.status}`}>{eventStatusLabel(event.status)}</span>
+          </button>)}
+          {scheduleEvents.length === 0 && <EmptyState title="ยังไม่มีตารางงาน" description="สร้างงานใหม่เพื่อเพิ่มรายการลงตาราง" />}
+        </div>
+        {selectedEvent && <form className="schedule-editor" onSubmit={submit}>
+          <span className="soft-chip cyan">แก้ไขช่วงเวลา</span>
+          <div className="schedule-editor-event"><div className="schedule-editor-cover" style={{ backgroundImage: `url(${selectedEvent.cover})` }} /><div><span className={`status-label ${selectedEvent.status}`}>{eventStatusLabel(selectedEvent.status)}</span><h3>{selectedEvent.title}</h3><p>{selectedEvent.venue}</p></div></div>
+          <div className="form-two-col"><Field label="เวลาเริ่ม"><input type="datetime-local" value={startsAt} onChange={(event) => { setStartsAt(event.target.value); setError(''); }} /></Field><Field label="เวลาจบ" error={error}><input type="datetime-local" value={endsAt} onChange={(event) => { setEndsAt(event.target.value); setError(''); }} /></Field></div>
+          <button className="button primary wide" type="submit">บันทึกตารางงาน <Icon name="check" /></button>
+        </form>}
+      </div>
+    </section>
+  );
 }
 
 function AdminStat({ label, value }: { label: string; value: string }) { return <div className="admin-stat"><span>{label}</span><strong>{value}</strong></div>; }
@@ -967,13 +1027,18 @@ function CreateEventForm({ onAddEvent }: { onAddEvent: (draft: EventDraft, cover
 function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) { return <label className={`form-field ${error ? 'has-error' : ''}`}><span>{label}</span>{children}{error && <small>{error}</small>}</label>; }
 
 function EventManager({ events, onPublish }: { events: PepsEvent[]; onPublish: (eventId: string) => void }) {
-  return <div className="event-manager"><div className="card-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> EVENT MANAGER</span><h2>รายการงาน</h2></div><span className="result-count">{events.length} รายการ</span></div><div className="manager-list">{events.map((event) => <div className="manager-row" key={event.id}><div className="manager-thumb" style={{ backgroundImage: `url(${event.cover})` }} /><div className="manager-copy"><strong>{event.title}</strong><span>{scheduleRange(event)} · {event.venue}</span></div><span className={`status-label ${event.status}`}>{eventStatusLabel(event.status)}</span>{event.status === 'draft' ? <button className="small-button" onClick={() => onPublish(event.id)}>เผยแพร่</button> : <span className="verified"><Icon name="check" /></span>}</div>)}</div></div>;
+  const requestDelete = (event: PepsEvent) => {
+    if (window.confirm(`ต้องการลบงาน “${event.title}” ใช่หรือไม่? ข้อมูล Photo Event และคู่แข่งที่ผูกไว้จะถูกลบด้วย`)) onPublish(`delete:${event.id}`);
+  };
+  return <div className="event-manager"><div className="card-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> EVENT MANAGER</span><h2>รายการงาน</h2></div><span className="result-count">{events.length} รายการ</span></div><div className="manager-list">{events.map((event) => <div className="manager-row" key={event.id}><div className="manager-thumb" style={{ backgroundImage: `url(${event.cover})` }} /><div className="manager-copy"><strong>{event.title}</strong><span>{scheduleRange(event)} · {event.venue}</span></div><span className={`status-label ${event.status}`}>{eventStatusLabel(event.status)}</span><div className="manager-actions">{event.status === 'draft' ? <button className="small-button" type="button" onClick={() => onPublish(event.id)}>เผยแพร่</button> : <span className="verified"><Icon name="check" /></span>}<button className="small-button danger-button" type="button" onClick={() => requestDelete(event)} aria-label={`ลบงาน ${event.title}`}><Icon name="trash" /></button></div></div>)}</div></div>;
 }
 
 function EmptyState({ title, description }: { title: string; description: string }) { return <div className="empty-state"><span className="empty-icon"><Icon name="spark" /></span><h3>{title}</h3><p>{description}</p></div>; }
 
 function LiveModal({ event, onClose }: { event: PepsEvent; onClose: () => void }) {
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(mouseEvent) => mouseEvent.target === mouseEvent.currentTarget && onClose()}><div className="live-modal" role="dialog" aria-modal="true" aria-label={`ดู Live ${event.title}`}><div className="player-shell" style={{ backgroundImage: `url(${event.cover})` }}><div className="player-overlay" /><div className="player-top"><span className="live-badge"><i /> LIVE</span><button className="modal-close light-close" onClick={onClose} aria-label="ปิด"><Icon name="close" /></button></div><div className="player-center"><span><Icon name="play" /></span><strong>กำลังเตรียมสัญญาณถ่ายทอดสด</strong><small>กดปุ่มด้านล่างเพื่อเปิดช่อง PEPS LIVE</small></div><div className="player-bottom"><span>{event.title}</span><span>PEPS LIVE · HD</span></div></div><div className="modal-info"><div><span className="soft-chip green">{eventStatusLabel(event.status)}</span><h2>{event.title}</h2><p>{event.subtitle}</p></div>{event.liveUrl && <a className="button primary" href={event.liveUrl} target="_blank" rel="noreferrer">เปิดช่องถ่ายทอดสด <Icon name="external" /></a>}</div></div></div>;
+  const isPast = isPastEvent(event);
+  const statusLabel = isPast ? 'จบแล้ว' : eventStatusLabel(event.status);
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(mouseEvent) => mouseEvent.target === mouseEvent.currentTarget && onClose()}><div className="live-modal" role="dialog" aria-modal="true" aria-label={`ดู ${isPast ? 'รายละเอียดงานย้อนหลัง' : 'Live'} ${event.title}`}><div className="player-shell" style={{ backgroundImage: `url(${event.cover})` }}><div className="player-overlay" /><div className="player-top"><span className={`live-badge ${isPast ? 'archive-badge' : ''}`}>{isPast ? 'ARCHIVE' : <><i /> LIVE</>}</span><button className="modal-close light-close" onClick={onClose} aria-label="ปิด"><Icon name="close" /></button></div><div className="player-center"><span><Icon name={isPast ? 'calendar' : 'play'} /></span><strong>{isPast ? 'งานนี้จบแล้ว' : 'กำลังเตรียมสัญญาณถ่ายทอดสด'}</strong><small>{isPast ? 'รายละเอียดงานและช่วงเวลาย้อนหลังยังเปิดดูได้จากหน้านี้' : 'กดปุ่มด้านล่างเพื่อเปิดช่อง PEPS LIVE'}</small></div><div className="player-bottom"><span>{event.title}</span><span>{isPast ? 'PEPS HUB · ARCHIVE' : 'PEPS LIVE · HD'}</span></div></div><div className="modal-info"><div><span className="soft-chip green">{statusLabel}</span><h2>{event.title}</h2><p>{event.subtitle}</p></div>{event.liveUrl && !isPast && <a className="button primary" href={event.liveUrl} target="_blank" rel="noreferrer">เปิดช่องถ่ายทอดสด <Icon name="external" /></a>}</div></div></div>;
 }
 
 export default App;
