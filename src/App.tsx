@@ -12,6 +12,7 @@ import {
   photoUploadStatusLabel,
   photoUploadStatusTone,
   slugify,
+  sortEventsByStartTime,
   validateEventDraft,
   validateImageUpload,
   validateImageUrl,
@@ -378,7 +379,7 @@ function App() {
     setAdminUnlocked(false);
   };
 
-  const publicEvents = state.events.filter((event) => event.status !== 'draft');
+  const publicEvents = sortEventsByStartTime(state.events.filter((event) => event.status !== 'draft'));
 
   return (
     <div className="app-shell">
@@ -423,7 +424,7 @@ function App() {
 function HomePage({ state, events, promoSlides, onOpenEvent, onPhotoMatch }: { state: ReturnType<typeof loadState>; events: PepsEvent[]; promoSlides: PromoSlide[]; onOpenEvent: (event: PepsEvent) => void; onPhotoMatch: (teamSlug?: string) => void }) {
   const liveEvents = events.filter((event) => event.status === 'live' && !isPastEvent(event));
   const pastEvents = events.filter((event) => isPastEvent(event));
-  const scheduleEvents = events.filter((event) => event.status !== 'live' && event.kind === 'live' && !isPastEvent(event));
+  const scheduleEvents = sortEventsByStartTime(events.filter((event) => event.status !== 'live' && event.kind === 'live' && !isPastEvent(event)));
   const photoEvent = events.find((event) => event.kind === 'photo');
   const linkedPreviewCount = new Set(state.matchPairs.flatMap((pair) => pairPreviewUrls(pair, state.teams, pair.photoEventId))).size;
   const availablePhotoCount = state.photos.length + linkedPreviewCount;
@@ -750,7 +751,7 @@ function AdminDashboard({ state, firebaseUser, cloudStateReady, cloudError, onSi
 }
 
 function AdminOverview({ state, onNavigate }: { state: ReturnType<typeof loadState>; onNavigate: (section: AdminSection) => void }) {
-  const nextEvent = [...state.events].sort((a, b) => a.startsAt.localeCompare(b.startsAt))[0];
+  const nextEvent = sortEventsByStartTime(state.events)[0];
   const publishedPhotoEvents = state.photoEvents.filter((event) => event.status === 'published');
   return <div className="admin-overview"><div className="admin-overview-banner"><div><span className="eyebrow"><span className="eyebrow-line" /> QUICK CONTROL</span><h2>วันนี้จะจัดการอะไร?</h2><p>เลือกหมวดที่ต้องการ แล้วทำงานเฉพาะส่วนได้ทันที</p></div><span className="admin-overview-badge"><Icon name="spark" /> {state.matchPairs.length} คู่แข่งขัน</span></div><div className="admin-quick-grid"><button className="admin-quick-card" type="button" onClick={() => onNavigate('events')}><span className="admin-quick-icon"><Icon name="calendar" /></span><span><strong>สร้างงานใหม่</strong><small>ใส่ Cover และเวลาเริ่ม–จบ</small></span><Icon name="arrow" /></button><button className="admin-quick-card" type="button" onClick={() => onNavigate('schedule')}><span className="admin-quick-icon cyan"><Icon name="calendar" /></span><span><strong>จัดตารางงาน</strong><small>แก้เวลาเริ่ม–จบในกระดานเดียว</small></span><Icon name="arrow" /></button><button className="admin-quick-card" type="button" onClick={() => onNavigate('matches')}><span className="admin-quick-icon purple"><Icon name="users" /></span><span><strong>เพิ่มคู่แข่งขัน</strong><small>ทีม A VS ทีม B และลิงก์รูปของคู่นี้</small></span><Icon name="arrow" /></button><button className="admin-quick-card" type="button" onClick={() => onNavigate('promos')}><span className="admin-quick-icon cyan"><Icon name="camera" /></span><span><strong>ภาพโปรโมท</strong><small>เพิ่มสไลด์ 16:9, 4:3 หรือ 1:1</small></span><Icon name="arrow" /></button></div><div className="admin-overview-grid"><div className="admin-summary-card"><span className="eyebrow"><span className="eyebrow-line" /> NEXT ON BOARD</span><h3>{nextEvent?.title ?? 'ยังไม่มีงานในระบบ'}</h3><p>{nextEvent ? `${scheduleRange(nextEvent)} · ${nextEvent.venue}` : 'ไปที่ งานและอีเว้น เพื่อสร้างรายการแรก'}</p></div><div className="admin-summary-card"><span className="eyebrow"><span className="eyebrow-line" /> PHOTO MATCH</span><h3>{publishedPhotoEvents.length} อีเว้นพร้อมให้ค้นหา</h3><p>{state.matchPairs.length > 0 ? 'คู่แข่งขันถูกแยกตามอีเว้นแล้ว ผู้ชมจะเลือกอีเว้นก่อนค้นหาคู่' : 'เพิ่มคู่แข่งขันเพื่อเริ่มจัดกลุ่มและผูกแหล่งรูป'}</p></div></div></div>;
 }
@@ -961,7 +962,7 @@ function scheduleRange(event: PepsEvent): string {
 }
 
 function ScheduleManager({ events, onUpdateSchedule }: { events: PepsEvent[]; onUpdateSchedule: (eventId: string, startsAt: string, endsAt: string) => void }) {
-  const scheduleEvents = [...events].sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+  const scheduleEvents = sortEventsByStartTime(events);
   const [selectedEventId, setSelectedEventId] = useState(scheduleEvents[0]?.id ?? '');
   const selectedEvent = scheduleEvents.find((event) => event.id === selectedEventId) ?? scheduleEvents[0];
   const [startsAt, setStartsAt] = useState(toDateTimeInput(selectedEvent?.startsAt));
@@ -1045,7 +1046,7 @@ function EventManager({ events, onPublish }: { events: PepsEvent[]; onPublish: (
   const requestDelete = (event: PepsEvent) => {
     if (window.confirm(`ต้องการลบงาน “${event.title}” ใช่หรือไม่? ข้อมูล Photo Event และคู่แข่งที่ผูกไว้จะถูกลบด้วย`)) onPublish(`delete:${event.id}`);
   };
-  return <div className="event-manager"><div className="card-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> EVENT MANAGER</span><h2>รายการงาน</h2></div><span className="result-count">{events.length} รายการ</span></div><div className="manager-list">{events.map((event) => <div className="manager-row" key={event.id}><div className="manager-thumb" style={{ backgroundImage: `url(${event.cover})` }} /><div className="manager-copy"><strong>{event.title}</strong><span>{scheduleRange(event)} · {event.venue}</span></div><span className={`status-label ${event.status}`}>{eventStatusLabel(event.status)}</span><div className="manager-actions">{event.status === 'draft' ? <button className="small-button" type="button" onClick={() => onPublish(event.id)}>เผยแพร่</button> : <span className="verified"><Icon name="check" /></span>}<button className="small-button danger-button" type="button" onClick={() => requestDelete(event)} aria-label={`ลบงาน ${event.title}`}><Icon name="trash" /></button></div></div>)}</div></div>;
+  return <div className="event-manager"><div className="card-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> EVENT MANAGER</span><h2>รายการงาน</h2></div><span className="result-count">{events.length} รายการ</span></div><div className="manager-list">{sortEventsByStartTime(events).map((event) => <div className="manager-row" key={event.id}><div className="manager-thumb" style={{ backgroundImage: `url(${event.cover})` }} /><div className="manager-copy"><strong>{event.title}</strong><span>{scheduleRange(event)} · {event.venue}</span></div><span className={`status-label ${event.status}`}>{eventStatusLabel(event.status)}</span><div className="manager-actions">{event.status === 'draft' ? <button className="small-button" type="button" onClick={() => onPublish(event.id)}>เผยแพร่</button> : <span className="verified"><Icon name="check" /></span>}<button className="small-button danger-button" type="button" onClick={() => requestDelete(event)} aria-label={`ลบงาน ${event.title}`}><Icon name="trash" /></button></div></div>)}</div></div>;
 }
 
 function EmptyState({ title, description }: { title: string; description: string }) { return <div className="empty-state"><span className="empty-icon"><Icon name="spark" /></span><h3>{title}</h3><p>{description}</p></div>; }

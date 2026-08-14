@@ -56,8 +56,8 @@ service cloud.firestore {
     // workspace stay in sync across browsers. The legacy document remains
     // readable for older clients, but only the current document is writable.
     match /appState/{documentId} {
-      allow read: if documentId in ['pepshub', 'pepshub-v2'];
-      allow create, update, delete: if documentId == 'pepshub-v2' && admin();
+      allow read: if documentId in ['pepshub', 'pepshub-v2', 'pepshub-v3'];
+      allow create, update, delete: if documentId == 'pepshub-v3' && admin();
     }
 
     match /{document=**} {

@@ -44,8 +44,13 @@ if (firebaseEnabled) {
 export const auth = firebaseAuth;
 export const cloudDb = firestore;
 export const storage = firebaseStorage;
-export const cloudStateRef = firestore ? doc(firestore, 'appState', 'pepshub-v2') : null;
-const legacyCloudStateRef = firestore ? doc(firestore, 'appState', 'pepshub') : null;
+
+const CURRENT_STATE_VERSION = 3;
+export const cloudStateRef = firestore ? doc(firestore, 'appState', 'pepshub-v3') : null;
+const fallbackCloudStateRefs = firestore ? [
+  doc(firestore, 'appState', 'pepshub-v2'),
+  doc(firestore, 'appState', 'pepshub'),
+] : [];
 export let cloudStateNeedsBootstrap = false;
 
 export function observeAuth(onUser: (user: User | null) => void): Unsubscribe {
@@ -54,24 +59,54 @@ export function observeAuth(onUser: (user: User | null) => void): Unsubscribe {
 }
 
 export function observeCloudState(onState: (state: AppState | null) => void, onError: (error: Error) => void): Unsubscribe {
-  if (!cloudStateRef || !legacyCloudStateRef) return () => undefined;
+  if (!cloudStateRef) return () => undefined;
   let fallbackRequest = 0;
+
+  const readFallbackState = async (requestId: number, index: number): Promise<void> => {
+    if (requestId !== fallbackRequest) return;
+    const fallbackRef = fallbackCloudStateRefs[index];
+    if (!fallbackRef) {
+      cloudStateNeedsBootstrap = true;
+      onState(null);
+      return;
+    }
+    const snapshot = await getDoc(fallbackRef);
+    if (requestId !== fallbackRequest) return;
+    if (!snapshot.exists()) {
+      await readFallbackState(requestId, index + 1);
+      return;
+    }
+
+    const rawState = snapshot.data() as { stateVersion?: unknown };
+    const normalizedState = normalizeAppState(snapshot.data());
+    const shouldRecover = rawState.stateVersion !== 2 && rawState.stateVersion !== CURRENT_STATE_VERSION;
+    const recoveredState = normalizedState && shouldRecover
+      ? recoverIncompleteCloudState(normalizedState)
+      : normalizedState;
+    cloudStateNeedsBootstrap = true;
+    onState(recoveredState);
+  };
+
   const unsubscribe = onSnapshot(cloudStateRef, (snapshot) => {
     if (snapshot.exists()) {
       fallbackRequest += 1;
-      cloudStateNeedsBootstrap = false;
-      onState(normalizeAppState(snapshot.data()));
+      const rawState = snapshot.data() as { stateVersion?: unknown };
+      const normalizedState = normalizeAppState(snapshot.data());
+      const needsMigration = rawState.stateVersion !== CURRENT_STATE_VERSION || !normalizedState;
+      const recoveredState = normalizedState && rawState.stateVersion !== CURRENT_STATE_VERSION
+        ? recoverIncompleteCloudState(normalizedState)
+        : normalizedState;
+      cloudStateNeedsBootstrap = needsMigration || recoveredState !== normalizedState;
+      onState(recoveredState);
       return;
     }
+
     const requestId = ++fallbackRequest;
-    void getDoc(legacyCloudStateRef).then((legacySnapshot) => {
-      if (requestId !== fallbackRequest) return;
-      const legacyState = legacySnapshot.exists() ? normalizeAppState(legacySnapshot.data()) : null;
-      const recoveredState = legacyState ? recoverIncompleteCloudState(legacyState) : null;
-      cloudStateNeedsBootstrap = true;
-      onState(recoveredState);
-    }).catch((error: unknown) => onError(error instanceof Error ? error : new Error('อ่านข้อมูล Firebase ไม่สำเร็จ')));
+    void readFallbackState(requestId, 0).catch((error: unknown) => {
+      onError(error instanceof Error ? error : new Error('Firebase read failed'));
+    });
   }, (error) => onError(error));
+
   return () => {
     fallbackRequest += 1;
     unsubscribe();
@@ -79,8 +114,9 @@ export function observeCloudState(onState: (state: AppState | null) => void, onE
 }
 
 export async function persistCloudState(state: AppState): Promise<void> {
-  if (!cloudStateRef) throw new Error('Firebase ยังไม่ได้ตั้งค่า');
+  if (!cloudStateRef) throw new Error('Firebase is not configured');
   await setDoc(cloudStateRef, {
+    stateVersion: CURRENT_STATE_VERSION,
     events: state.events,
     teams: state.teams,
     photoEvents: state.photoEvents,
@@ -92,7 +128,7 @@ export async function persistCloudState(state: AppState): Promise<void> {
 }
 
 export async function signInAdmin(email: string, password: string): Promise<User> {
-  if (!firebaseAuth) throw new Error('Firebase ยังไม่ได้ตั้งค่า');
+  if (!firebaseAuth) throw new Error('Firebase is not configured');
   const result = await signInWithEmailAndPassword(firebaseAuth, email.trim(), password);
   return result.user;
 }

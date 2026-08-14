@@ -26,6 +26,14 @@ export function sortEvents(events: PepsEvent[]): PepsEvent[] {
   return [...events].sort((a, b) => statusWeight[a.status] - statusWeight[b.status] || a.startsAt.localeCompare(b.startsAt));
 }
 
+export function sortEventsByStartTime(events: PepsEvent[]): PepsEvent[] {
+  const timestamp = (value: string): number => {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+  };
+  return [...events].sort((a, b) => timestamp(a.startsAt) - timestamp(b.startsAt) || a.id.localeCompare(b.id));
+}
+
 export function visibleEvents(events: PepsEvent[]): PepsEvent[] {
   return sortEvents(events.filter((event) => event.status === 'live' || event.status === 'published'));
 }

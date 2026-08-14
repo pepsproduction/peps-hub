@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createEventFromDraft, matchPairExists, photoUploadStatus, searchTeams, slugify, sortEvents, teamPhotoCount, validateEventDraft, validateImageUpload, validateImageUrl, visibleEvents } from './domain';
+import { createEventFromDraft, matchPairExists, photoUploadStatus, searchTeams, slugify, sortEvents, sortEventsByStartTime, teamPhotoCount, validateEventDraft, validateImageUpload, validateImageUrl, visibleEvents } from './domain';
 import { directImageUrl, isSafePhotoPreviewUrl, isSafePhotoSourceUrl, limitPhotoPreviews, pairDisplayName, pairPreviewUrls, PHOTO_PREVIEW_LIMIT } from './photoSources';
 import type { EventDraft, MatchPair, PepsEvent, PhotoAsset, PhotoEvent, Team } from '../types';
 
@@ -26,6 +26,15 @@ describe('PepsHub domain logic', () => {
     const events = [event('draft', 'draft', '2026-01-01'), event('up-next', 'published', '2026-01-01'), event('live', 'live', '2026-12-01')];
     expect(visibleEvents(events).map((item) => item.id)).toEqual(['live', 'up-next']);
     expect(sortEvents(events).map((item) => item.id)).toEqual(['live', 'up-next', 'draft']);
+  });
+
+  it('orders schedules by start date instead of creation order', () => {
+    const events = [
+      event('created-first', 'published', '2026-08-16T18:00:00+07:00'),
+      event('nearest', 'published', '2026-08-14T09:00:00+07:00'),
+      event('middle', 'published', '2026-08-15T12:00:00+07:00'),
+    ];
+    expect(sortEventsByStartTime(events).map((item) => item.id)).toEqual(['nearest', 'middle', 'created-first']);
   });
 
   it('requires the minimum event fields and validates live URLs', () => {
