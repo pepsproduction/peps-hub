@@ -18,7 +18,7 @@ import {
 } from './lib/domain';
 import { loadState, saveState } from './lib/storage';
 import { directImageUrl, isSafePhotoSourceUrl, limitPhotoPreviews, pairDisplayName, pairPreviewUrls, photoProviderLabel, photoSourcesForPair } from './lib/photoSources';
-import type { EventDraft, MatchPair, Page, PhotoAsset, PhotoEvent, PhotoProvider, PhotoSource, PhotoUploadStatus, PepsEvent, Team, ValidationErrors } from './types';
+import type { EventDraft, MatchPair, Page, PhotoAsset, PhotoEvent, PhotoProvider, PhotoSource, PhotoUploadStatus, PromoSlide, PepsEvent, Team, ValidationErrors } from './types';
 import './styles.css';
 
 const EMPTY_DRAFT: EventDraft = {
@@ -31,6 +31,14 @@ const EMPTY_DRAFT: EventDraft = {
   liveUrl: 'https://www.youtube.com/@PEPSLIVE',
   tags: 'LIVE, ฟุตบอล',
 };
+
+const PROMO_DURATION_MIN = 2;
+const PROMO_DURATION_MAX = 60;
+
+function normalizePromoDuration(value: number): number {
+  if (!Number.isFinite(value)) return 6;
+  return Math.min(PROMO_DURATION_MAX, Math.max(PROMO_DURATION_MIN, Math.round(value)));
+}
 
 type Notice = { tone: 'success' | 'info'; message: string } | null;
 
@@ -206,6 +214,33 @@ function App() {
     setNotice({ tone: 'success', message: cleanedUrl ? 'บันทึกลิงก์รูปของคู่นี้แล้ว ระบบตั้งค่า sync อัตโนมัติไว้ให้' : 'ลบลิงก์รูปของคู่นี้แล้ว' });
   };
 
+  const addPromoSlide = (image: string, durationSeconds: number) => {
+    const cleanedImage = image.trim();
+    if (!cleanedImage) {
+      setNotice({ tone: 'info', message: 'กรุณาเลือกรูปหรือใส่ลิงก์รูปโปรโมทก่อนเพิ่มสไลด์' });
+      return;
+    }
+    const slide: PromoSlide = {
+      id: `promo-slide-${Date.now()}`,
+      image: cleanedImage,
+      durationSeconds: normalizePromoDuration(durationSeconds),
+    };
+    setState((current) => ({ ...current, promoSlides: [...(current.promoSlides ?? []), slide] }));
+    setNotice({ tone: 'success', message: 'เพิ่มภาพโปรโมทลงสไลด์แล้ว' });
+  };
+
+  const updatePromoSlideDuration = (slideId: string, durationSeconds: number) => {
+    setState((current) => ({
+      ...current,
+      promoSlides: current.promoSlides.map((slide) => slide.id === slideId ? { ...slide, durationSeconds: normalizePromoDuration(durationSeconds) } : slide),
+    }));
+  };
+
+  const removePromoSlide = (slideId: string) => {
+    setState((current) => ({ ...current, promoSlides: current.promoSlides.filter((slide) => slide.id !== slideId) }));
+    setNotice({ tone: 'success', message: 'ลบภาพโปรโมทออกจากสไลด์แล้ว' });
+  };
+
   const publicEvents = visibleEvents(state.events);
   const liveCount = state.events.filter((event) => event.status === 'live').length;
 
@@ -231,9 +266,9 @@ function App() {
       </header>
 
       <main>
-        {page === 'home' && <HomePage events={publicEvents} liveCount={liveCount} onOpenEvent={setSelectedEvent} onPhotoMatch={openPhotoMatch} />}
+        {page === 'home' && <HomePage events={publicEvents} liveCount={liveCount} promoSlides={state.promoSlides} onOpenEvent={setSelectedEvent} onPhotoMatch={openPhotoMatch} />}
         {page === 'photos' && <PhotoMatchPage state={state} selectedPairId={selectedPairId} onSelectPair={setSelectedPairId} />}
-        {page === 'admin' && <AdminPage state={state} unlocked={adminUnlocked} onUnlock={() => setAdminUnlocked(true)} onAddEvent={addEvent} onPublish={publishEvent} onUpdateMatchPairPhotoSource={updateMatchPairPhotoSource} onAddMatchPair={addMatchPair} onUpdateSchedule={updateEventSchedule} />}
+        {page === 'admin' && <AdminPage state={state} unlocked={adminUnlocked} onUnlock={() => setAdminUnlocked(true)} onAddEvent={addEvent} onPublish={publishEvent} onUpdateMatchPairPhotoSource={updateMatchPairPhotoSource} onAddMatchPair={addMatchPair} onUpdateSchedule={updateEventSchedule} onAddPromoSlide={addPromoSlide} onUpdatePromoSlideDuration={updatePromoSlideDuration} onRemovePromoSlide={removePromoSlide} />}
       </main>
 
       <footer className="site-footer">
@@ -249,7 +284,7 @@ function App() {
   );
 }
 
-function HomePage({ events, liveCount, onOpenEvent, onPhotoMatch }: { events: PepsEvent[]; liveCount: number; onOpenEvent: (event: PepsEvent) => void; onPhotoMatch: (teamSlug?: string) => void }) {
+function HomePage({ events, liveCount, promoSlides, onOpenEvent, onPhotoMatch }: { events: PepsEvent[]; liveCount: number; promoSlides: PromoSlide[]; onOpenEvent: (event: PepsEvent) => void; onPhotoMatch: (teamSlug?: string) => void }) {
   const liveEvents = events.filter((event) => event.status === 'live');
   const scheduleEvents = events.filter((event) => event.status !== 'live' && event.kind === 'live');
   const photoEvent = events.find((event) => event.kind === 'photo');
@@ -266,16 +301,7 @@ function HomePage({ events, liveCount, onOpenEvent, onPhotoMatch }: { events: Pe
             <div className="hero-actions"><button className="button primary" onClick={() => document.getElementById('schedule')?.scrollIntoView({ behavior: 'smooth' })}>ดูตารางงาน <Icon name="arrow" /></button><button className="button ghost" onClick={() => onPhotoMatch()}><Icon name="camera" /> ค้นหาภาพทีม</button></div>
             <div className="hero-proof"><div className="avatar-stack"><span>PU</span><span>NS</span><span>RC</span><span>+</span></div><span>ทีมกีฬาใช้ PepsHub<br /><strong>เพื่อเก็บทุกโมเมนต์</strong></span></div>
           </div>
-          <div className="hero-visual">
-            <div className="visual-backdrop" />
-            <div className="hero-card-main">
-              <div className="hero-card-top"><span className="live-badge"><i /> LIVE NOW</span><span>PEPS LIVE CUP</span></div>
-              <div className="hero-score"><div><strong>PEPS</strong><span>UNITED</span></div><b>2 <small>—</small> 1</b><div className="align-right"><strong>NORTH</strong><span>STAR FC</span></div></div>
-              <div className="hero-card-footer"><span>รอบชิงชนะเลิศ · 72:14</span><button onClick={() => liveEvents[0] && onOpenEvent(liveEvents[0])}><Icon name="play" /></button></div>
-            </div>
-            <div className="float-card float-photo"><span className="float-icon"><Icon name="camera" /></span><div><strong>Photo Match</strong><small>ค้นหาภาพด้วยชื่อทีม</small></div><Icon name="arrow" /></div>
-            <div className="float-card float-live"><span className="pulse-bars"><i /><i /><i /><i /></span><div><strong>{liveCount || 0} รายการ</strong><small>กำลังถ่ายทอดสด</small></div></div>
-          </div>
+          <div className="hero-visual"><PromoSlider slides={promoSlides} /></div>
         </div>
       </section>
 
@@ -290,6 +316,39 @@ function HomePage({ events, liveCount, onOpenEvent, onPhotoMatch }: { events: Pe
 
       {photoEvent && <section className="photo-cta-section"><div className="container photo-cta"><div className="photo-cta-copy"><div className="eyebrow"><span className="eyebrow-line" /> FIND YOUR MOMENT</div><h2>ภาพของทีมคุณ<br /><span>อยู่ตรงนี้</span></h2><p>ไม่ต้องไล่ดูทีละภาพ แค่พิมพ์ชื่อทีม แล้วเจอโมเมนต์ของคุณในไม่กี่วินาที</p><button className="button light" onClick={() => onPhotoMatch()}><Icon name="search" /> เปิด Photo Match <Icon name="arrow" /></button></div><div className="photo-collage"><div className="collage-photo tall" style={{ backgroundImage: `url(${photoEvent.cover})` }} /><div className="collage-photo small-one" style={{ backgroundImage: `url(${photoEvent.cover})` }} /><div className="collage-note"><Icon name="spark" /><strong>2.4k+</strong><span>ภาพที่พร้อมให้ค้นหา</span></div></div></div></section>}
     </>
+  );
+}
+
+function PromoSlider({ slides }: { slides: PromoSlide[] }) {
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  useEffect(() => {
+    if (slides.length === 0) {
+      setActiveIndex(0);
+      return undefined;
+    }
+    if (activeIndex >= slides.length) setActiveIndex(0);
+    if (slides.length <= 1) return undefined;
+    const duration = normalizePromoDuration(slides[activeIndex]?.durationSeconds ?? 6) * 1000;
+    const timer = window.setTimeout(() => setActiveIndex((current) => (current + 1) % slides.length), duration);
+    return () => window.clearTimeout(timer);
+  }, [activeIndex, slides]);
+
+  if (slides.length === 0) return <div className="promo-slider promo-slider-empty" aria-label="ยังไม่มีภาพโปรโมท" />;
+
+  const goTo = (index: number) => setActiveIndex((index + slides.length) % slides.length);
+
+  return (
+    <div className="promo-slider" aria-label="ภาพโปรโมท">
+      <div className="promo-slider-frame">
+        {slides.map((slide, index) => <img className={'promo-slide ' + (index === activeIndex ? 'active' : '')} src={slide.image} alt="" aria-hidden={index !== activeIndex} key={slide.id} />)}
+        {slides.length > 1 && <>
+          <button className="promo-slider-arrow previous" type="button" onClick={() => goTo(activeIndex - 1)} aria-label="ภาพโปรโมทก่อนหน้า">‹</button>
+          <button className="promo-slider-arrow next" type="button" onClick={() => goTo(activeIndex + 1)} aria-label="ภาพโปรโมทถัดไป">›</button>
+        </>}
+      </div>
+      {slides.length > 1 && <div className="promo-slider-controls" aria-label="เลือกภาพโปรโมท">{slides.map((slide, index) => <button className={'promo-slider-dot ' + (index === activeIndex ? 'active' : '')} type="button" onClick={() => goTo(index)} aria-label={`เลือกภาพโปรโมทที่ ${index + 1}`} key={slide.id} />)}</div>}
+    </div>
   );
 }
 
@@ -447,7 +506,7 @@ function PhotoMatchPage({ state, selectedPairId, onSelectPair }: { state: Return
 
 function PairSourceLinks({ sources }: { sources: PhotoSource[] }) {
   if (sources.length === 0) return <div className="matched-source muted"><span><Icon name="camera" /> ยังไม่มีลิงก์รูปของคู่นี้</span></div>;
-  return <div className="matched-source"><span><Icon name="external" /> แหล่งรูปของคู่แข่งขัน</span>{sources.map((source) => <PhotoSourceLink key={source.provider} source={source} label="ดูรูปเต็มได้ที่นี่" />)}</div>;
+  return <div className="matched-source prominent"><span className="matched-source-label"><Icon name="external" /> แหล่งรูปของคู่แข่งขัน</span><div className="matched-source-actions">{sources.map((source) => <PhotoSourceLink key={source.provider} source={source} label={sources.length > 1 ? `ดูรูปเต็มได้ที่นี่ · ${photoProviderLabel(source.provider)}` : 'ดูรูปเต็มได้ที่นี่'} className="photo-source-cta" />)}</div></div>;
 }
 
 function PairPhotoEmpty({ sources }: { sources: PhotoSource[] }) {
@@ -486,9 +545,9 @@ function PhotoSourceLink({ source, label = 'ดูรูปเต็มได้
 }
 
 
-function AdminPage({ state, unlocked, onUnlock, onAddEvent, onPublish, onUpdateMatchPairPhotoSource, onAddMatchPair, onUpdateSchedule }: { state: ReturnType<typeof loadState>; unlocked: boolean; onUnlock: () => void; onAddEvent: (draft: EventDraft, cover: string) => void; onPublish: (eventId: string) => void; onUpdateMatchPairPhotoSource: (pairId: string, provider: PhotoProvider, url: string) => void; onAddMatchPair: (photoEventId: string, teamAName: string, teamBName: string) => string | undefined; onUpdateSchedule: (eventId: string, startsAt: string, endsAt: string) => void }) {
+function AdminPage({ state, unlocked, onUnlock, onAddEvent, onPublish, onUpdateMatchPairPhotoSource, onAddMatchPair, onUpdateSchedule, onAddPromoSlide, onUpdatePromoSlideDuration, onRemovePromoSlide }: { state: ReturnType<typeof loadState>; unlocked: boolean; onUnlock: () => void; onAddEvent: (draft: EventDraft, cover: string) => void; onPublish: (eventId: string) => void; onUpdateMatchPairPhotoSource: (pairId: string, provider: PhotoProvider, url: string) => void; onAddMatchPair: (photoEventId: string, teamAName: string, teamBName: string) => string | undefined; onUpdateSchedule: (eventId: string, startsAt: string, endsAt: string) => void; onAddPromoSlide: (image: string, durationSeconds: number) => void; onUpdatePromoSlideDuration: (slideId: string, durationSeconds: number) => void; onRemovePromoSlide: (slideId: string) => void }) {
   if (!unlocked) return <AdminGate onUnlock={onUnlock} />;
-  return <AdminDashboard state={state} onAddEvent={onAddEvent} onPublish={onPublish} onUpdateMatchPairPhotoSource={onUpdateMatchPairPhotoSource} onAddMatchPair={onAddMatchPair} onUpdateSchedule={onUpdateSchedule} />;
+  return <AdminDashboard state={state} onAddEvent={onAddEvent} onPublish={onPublish} onUpdateMatchPairPhotoSource={onUpdateMatchPairPhotoSource} onAddMatchPair={onAddMatchPair} onUpdateSchedule={onUpdateSchedule} onAddPromoSlide={onAddPromoSlide} onUpdatePromoSlideDuration={onUpdatePromoSlideDuration} onRemovePromoSlide={onRemovePromoSlide} />;
 }
 
 function AdminGate({ onUnlock }: { onUnlock: () => void }) {
@@ -498,15 +557,16 @@ function AdminGate({ onUnlock }: { onUnlock: () => void }) {
   return <section className="page-section admin-page"><div className="container narrow"><div className="admin-gate"><div className="gate-mark"><Icon name="settings" /></div><div className="eyebrow"><span className="eyebrow-line" /> ADMIN WORKSPACE</div><h1>จัดการงาน<br /><span>ของ PepsHub</span></h1><p>เข้าสู่หลังบ้านเพื่อสร้างงาน อัปโหลด Cover และเผยแพร่ตารางให้ผู้ชม</p><form onSubmit={submit} className="login-form"><label>อีเมลผู้ดูแล<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" /></label><label>รหัสผ่าน<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="ใส่รหัสสำหรับ Local Demo" autoComplete="current-password" /></label><button className="button primary wide" type="submit">เข้าสู่ Local Demo <Icon name="arrow" /></button></form><div className="local-warning"><Icon name="spark" /><span>โหมดนี้ใช้ข้อมูลในเครื่องเท่านั้น สำหรับ production ต้องเชื่อม Firebase Authentication และกำหนดสิทธิ์ผู้ดูแล</span></div></div></div></section>;
 }
 
-type AdminSection = 'overview' | 'events' | 'schedule' | 'matches';
+type AdminSection = 'overview' | 'events' | 'schedule' | 'matches' | 'promos';
 
-function AdminDashboard({ state, onAddEvent, onPublish, onUpdateMatchPairPhotoSource, onAddMatchPair, onUpdateSchedule }: { state: ReturnType<typeof loadState>; onAddEvent: (draft: EventDraft, cover: string) => void; onPublish: (eventId: string) => void; onUpdateMatchPairPhotoSource: (pairId: string, provider: PhotoProvider, url: string) => void; onAddMatchPair: (photoEventId: string, teamAName: string, teamBName: string) => string | undefined; onUpdateSchedule: (eventId: string, startsAt: string, endsAt: string) => void }) {
+function AdminDashboard({ state, onAddEvent, onPublish, onUpdateMatchPairPhotoSource, onAddMatchPair, onUpdateSchedule, onAddPromoSlide, onUpdatePromoSlideDuration, onRemovePromoSlide }: { state: ReturnType<typeof loadState>; onAddEvent: (draft: EventDraft, cover: string) => void; onPublish: (eventId: string) => void; onUpdateMatchPairPhotoSource: (pairId: string, provider: PhotoProvider, url: string) => void; onAddMatchPair: (photoEventId: string, teamAName: string, teamBName: string) => string | undefined; onUpdateSchedule: (eventId: string, startsAt: string, endsAt: string) => void; onAddPromoSlide: (image: string, durationSeconds: number) => void; onUpdatePromoSlideDuration: (slideId: string, durationSeconds: number) => void; onRemovePromoSlide: (slideId: string) => void }) {
   const [section, setSection] = useState<AdminSection>('overview');
-  const sections: Array<{ id: AdminSection; label: string; icon: 'home' | 'calendar' | 'users' }> = [
+  const sections: Array<{ id: AdminSection; label: string; icon: 'home' | 'calendar' | 'camera' | 'users' }> = [
     { id: 'overview', label: 'ภาพรวม', icon: 'home' },
     { id: 'events', label: 'งานและอีเว้น', icon: 'calendar' },
     { id: 'schedule', label: 'ตารางงาน', icon: 'calendar' },
     { id: 'matches', label: 'คู่แข่งขันและรูป', icon: 'users' },
+    { id: 'promos', label: 'ภาพโปรโมท', icon: 'camera' },
   ];
 
   return (
@@ -534,6 +594,7 @@ function AdminDashboard({ state, onAddEvent, onPublish, onUpdateMatchPairPhotoSo
           {section === 'events' && <div className="admin-grid"><CreateEventForm onAddEvent={onAddEvent} /><EventManager events={state.events} onPublish={onPublish} /></div>}
           {section === 'schedule' && <ScheduleManager events={state.events} onUpdateSchedule={onUpdateSchedule} />}
           {section === 'matches' && <MatchSourceManager teams={state.teams} photoEvents={state.photoEvents} matchPairs={state.matchPairs} onSavePairSource={onUpdateMatchPairPhotoSource} onAddPair={onAddMatchPair} />}
+          {section === 'promos' && <PromoSlideManager slides={state.promoSlides} onAdd={onAddPromoSlide} onUpdateDuration={onUpdatePromoSlideDuration} onRemove={onRemovePromoSlide} />}
         </div>
       </div>
     </section>
@@ -543,7 +604,82 @@ function AdminDashboard({ state, onAddEvent, onPublish, onUpdateMatchPairPhotoSo
 function AdminOverview({ state, onNavigate }: { state: ReturnType<typeof loadState>; onNavigate: (section: AdminSection) => void }) {
   const nextEvent = [...state.events].sort((a, b) => a.startsAt.localeCompare(b.startsAt))[0];
   const publishedPhotoEvents = state.photoEvents.filter((event) => event.status === 'published');
-  return <div className="admin-overview"><div className="admin-overview-banner"><div><span className="eyebrow"><span className="eyebrow-line" /> QUICK CONTROL</span><h2>วันนี้จะจัดการอะไร?</h2><p>เลือกหมวดที่ต้องการ แล้วทำงานเฉพาะส่วนได้ทันที</p></div><span className="admin-overview-badge"><Icon name="spark" /> {state.matchPairs.length} คู่แข่งขัน</span></div><div className="admin-quick-grid"><button className="admin-quick-card" type="button" onClick={() => onNavigate('events')}><span className="admin-quick-icon"><Icon name="calendar" /></span><span><strong>สร้างงานใหม่</strong><small>ใส่ Cover และเวลาเริ่ม–จบ</small></span><Icon name="arrow" /></button><button className="admin-quick-card" type="button" onClick={() => onNavigate('schedule')}><span className="admin-quick-icon cyan"><Icon name="calendar" /></span><span><strong>จัดตารางงาน</strong><small>แก้เวลาเริ่ม–จบในกระดานเดียว</small></span><Icon name="arrow" /></button><button className="admin-quick-card" type="button" onClick={() => onNavigate('matches')}><span className="admin-quick-icon purple"><Icon name="users" /></span><span><strong>เพิ่มคู่แข่งขัน</strong><small>ทีม A VS ทีม B และลิงก์รูปของคู่นี้</small></span><Icon name="arrow" /></button></div><div className="admin-overview-grid"><div className="admin-summary-card"><span className="eyebrow"><span className="eyebrow-line" /> NEXT ON BOARD</span><h3>{nextEvent?.title ?? 'ยังไม่มีงานในระบบ'}</h3><p>{nextEvent ? `${scheduleRange(nextEvent)} · ${nextEvent.venue}` : 'ไปที่ งานและอีเว้น เพื่อสร้างรายการแรก'}</p></div><div className="admin-summary-card"><span className="eyebrow"><span className="eyebrow-line" /> PHOTO MATCH</span><h3>{publishedPhotoEvents.length} อีเว้นพร้อมให้ค้นหา</h3><p>{state.matchPairs.length > 0 ? 'คู่แข่งขันถูกแยกตามอีเว้นแล้ว ผู้ชมจะเลือกอีเว้นก่อนค้นหาคู่' : 'เพิ่มคู่แข่งขันเพื่อเริ่มจัดกลุ่มและผูกแหล่งรูป'}</p></div></div></div>;
+  return <div className="admin-overview"><div className="admin-overview-banner"><div><span className="eyebrow"><span className="eyebrow-line" /> QUICK CONTROL</span><h2>วันนี้จะจัดการอะไร?</h2><p>เลือกหมวดที่ต้องการ แล้วทำงานเฉพาะส่วนได้ทันที</p></div><span className="admin-overview-badge"><Icon name="spark" /> {state.matchPairs.length} คู่แข่งขัน</span></div><div className="admin-quick-grid"><button className="admin-quick-card" type="button" onClick={() => onNavigate('events')}><span className="admin-quick-icon"><Icon name="calendar" /></span><span><strong>สร้างงานใหม่</strong><small>ใส่ Cover และเวลาเริ่ม–จบ</small></span><Icon name="arrow" /></button><button className="admin-quick-card" type="button" onClick={() => onNavigate('schedule')}><span className="admin-quick-icon cyan"><Icon name="calendar" /></span><span><strong>จัดตารางงาน</strong><small>แก้เวลาเริ่ม–จบในกระดานเดียว</small></span><Icon name="arrow" /></button><button className="admin-quick-card" type="button" onClick={() => onNavigate('matches')}><span className="admin-quick-icon purple"><Icon name="users" /></span><span><strong>เพิ่มคู่แข่งขัน</strong><small>ทีม A VS ทีม B และลิงก์รูปของคู่นี้</small></span><Icon name="arrow" /></button><button className="admin-quick-card" type="button" onClick={() => onNavigate('promos')}><span className="admin-quick-icon cyan"><Icon name="camera" /></span><span><strong>ภาพโปรโมท</strong><small>เพิ่มสไลด์ 16:9 และตั้งเวลาแสดง</small></span><Icon name="arrow" /></button></div><div className="admin-overview-grid"><div className="admin-summary-card"><span className="eyebrow"><span className="eyebrow-line" /> NEXT ON BOARD</span><h3>{nextEvent?.title ?? 'ยังไม่มีงานในระบบ'}</h3><p>{nextEvent ? `${scheduleRange(nextEvent)} · ${nextEvent.venue}` : 'ไปที่ งานและอีเว้น เพื่อสร้างรายการแรก'}</p></div><div className="admin-summary-card"><span className="eyebrow"><span className="eyebrow-line" /> PHOTO MATCH</span><h3>{publishedPhotoEvents.length} อีเว้นพร้อมให้ค้นหา</h3><p>{state.matchPairs.length > 0 ? 'คู่แข่งขันถูกแยกตามอีเว้นแล้ว ผู้ชมจะเลือกอีเว้นก่อนค้นหาคู่' : 'เพิ่มคู่แข่งขันเพื่อเริ่มจัดกลุ่มและผูกแหล่งรูป'}</p></div></div></div>;
+}
+
+function PromoSlideManager({ slides, onAdd, onUpdateDuration, onRemove }: { slides: PromoSlide[]; onAdd: (image: string, durationSeconds: number) => void; onUpdateDuration: (slideId: string, durationSeconds: number) => void; onRemove: (slideId: string) => void }) {
+  const [imagePreview, setImagePreview] = useState('');
+  const [imageUrl, setImageUrl] = useState('');
+  const [duration, setDuration] = useState('6');
+  const [error, setError] = useState('');
+
+  const uploadImage = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const nextError = validateImageUpload(file);
+    setError(nextError ?? '');
+    if (nextError) {
+      setImagePreview('');
+      return;
+    }
+    const reader = new FileReader();
+    reader.addEventListener('load', () => {
+      setImagePreview(typeof reader.result === 'string' ? reader.result : '');
+      setImageUrl('');
+      setError('');
+    });
+    reader.readAsDataURL(file);
+  };
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const source = imagePreview || imageUrl.trim();
+    const urlError = imagePreview ? null : validateImageUrl(imageUrl);
+    if (!source) {
+      setError('เลือกรูป 16:9 หรือใส่ลิงก์รูปโปรโมทก่อน');
+      return;
+    }
+    if (urlError) {
+      setError(urlError);
+      return;
+    }
+    onAdd(source, Number(duration));
+    setImagePreview('');
+    setImageUrl('');
+    setDuration('6');
+    setError('');
+  };
+
+  return (
+    <section className="promo-manager">
+      <div className="card-heading">
+        <div><span className="eyebrow"><span className="eyebrow-line" /> PROMO SLIDER</span><h2>ภาพโปรโมทหน้าแรก</h2></div>
+        <span className="source-security-chip">16:9 · {slides.length} สไลด์</span>
+      </div>
+      <p className="source-manager-intro">เพิ่มภาพโปรโมทได้ทั้งจากไฟล์ในเครื่องหรือลิงก์ภาพที่ฝากไว้ ระบบจะแสดงเฉพาะรูปบนหน้าแรก ไม่แสดงชื่อไฟล์หรือลิงก์ และจะเลื่อนอัตโนมัติตามเวลาที่ตั้งไว้</p>
+      <div className="promo-manager-layout">
+        <form className="promo-add-card" onSubmit={submit}>
+          <label className={'promo-upload-box ' + (imagePreview ? 'has-preview' : '')} style={imagePreview ? { backgroundImage: `url(${imagePreview})` } : undefined}>
+            <input type="file" accept="image/*" onChange={uploadImage} />
+            {!imagePreview && <><span className="promo-upload-icon"><Icon name="camera" /></span><strong>อัปโหลดภาพโปรโมท</strong><small>แนะนำอัตราส่วน 16:9 · ไม่เกิน 5 MB</small></>}
+            {imagePreview && <span className="promo-upload-change">เลือกรูปใหม่</span>}
+          </label>
+          <Field label="หรือลิงก์ภาพโปรโมท" error={error}><input type="url" value={imageUrl} onChange={(event) => { setImageUrl(event.target.value); setImagePreview(''); setError(''); }} placeholder="https://.../promo-image.jpg" /></Field>
+          <div className="promo-duration-row"><Field label="เวลาค้างต่อภาพ (วินาที)"><input type="number" min={PROMO_DURATION_MIN} max={PROMO_DURATION_MAX} value={duration} onChange={(event) => setDuration(event.target.value)} /></Field><span className="promo-duration-hint">ตั้งได้ {PROMO_DURATION_MIN}–{PROMO_DURATION_MAX} วินาที</span></div>
+          <button className="button primary wide" type="submit">เพิ่มลงสไลด์ <Icon name="check" /></button>
+        </form>
+        <div className="promo-slide-list">
+          <div className="promo-list-heading"><strong>ลำดับภาพสไลด์</strong><span>ลากสายตาดูตัวอย่างได้จากภาพเท่านั้น</span></div>
+          {slides.length > 0 ? slides.map((slide, index) => <div className="promo-slide-row" key={slide.id}>
+            <div className="promo-slide-thumb"><img src={slide.image} alt={`ตัวอย่างสไลด์ ${index + 1}`} /></div>
+            <div className="promo-slide-info"><strong>สไลด์ {String(index + 1).padStart(2, '0')}</strong><small>ภาพจะแสดงบนหน้าแรก</small></div>
+            <label className="promo-slide-duration"><span>ค้าง</span><input type="number" min={PROMO_DURATION_MIN} max={PROMO_DURATION_MAX} value={slide.durationSeconds} onChange={(event) => onUpdateDuration(slide.id, Number(event.target.value))} /><span>วิ</span></label>
+            <button className="promo-remove" type="button" onClick={() => onRemove(slide.id)} aria-label={`ลบสไลด์ ${index + 1}`}><Icon name="close" /></button>
+          </div>) : <div className="promo-empty"><Icon name="camera" /><span>ยังไม่มีภาพโปรโมท เพิ่มภาพแรกจากช่องด้านซ้าย</span></div>}
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function MatchSourceManager({ teams, photoEvents, matchPairs, onSavePairSource, onAddPair }: { teams: Team[]; photoEvents: PhotoEvent[]; matchPairs: MatchPair[]; onSavePairSource: (pairId: string, provider: PhotoProvider, url: string) => void; onAddPair: (photoEventId: string, teamAName: string, teamBName: string) => string | undefined }) {

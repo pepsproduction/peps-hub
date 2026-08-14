@@ -18,6 +18,7 @@ function migrateState(state: AppState): AppState {
   const fallbackPhotoEventId = state.photoEvents[0]?.id ?? '';
   const teams = state.teams.map((team) => ({ ...team, photoSources: Array.isArray(team.photoSources) ? team.photoSources : [] }));
   const seededPairs = cloneState(seedState).matchPairs;
+  const seededPromoSlides = cloneState(seedState).promoSlides;
   const matchPairs = (Array.isArray(state.matchPairs) ? state.matchPairs : seededPairs).map((pair) => {
     const seededSources = seededPairs.find((seedPair) => seedPair.id === pair.id)?.photoSources ?? [];
     if (Array.isArray(pair.photoSources) && pair.photoSources.length > 0) {
@@ -41,6 +42,7 @@ function migrateState(state: AppState): AppState {
   return {
     ...state,
     matchPairs,
+    promoSlides: Array.isArray(state.promoSlides) ? state.promoSlides : seededPromoSlides,
     teams,
     photos: state.photos
       .map((photo) => ({ ...photo, photoEventId: photo.photoEventId || fallbackPhotoEventId }))

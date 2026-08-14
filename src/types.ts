@@ -80,12 +80,19 @@ export interface MatchPair {
   photoSources?: PhotoSource[];
 }
 
+export interface PromoSlide {
+  id: string;
+  image: string;
+  durationSeconds: number;
+}
+
 export interface AppState {
   events: PepsEvent[];
   teams: Team[];
   photoEvents: PhotoEvent[];
   photos: PhotoAsset[];
   matchPairs: MatchPair[];
+  promoSlides: PromoSlide[];
 }
 
 export interface EventDraft {

@@ -1,7 +1,12 @@
-import type { AppState, MatchPair, PhotoAsset, PhotoEvent, PhotoSource, PepsEvent, Team } from './types';
+import type { AppState, MatchPair, PhotoAsset, PhotoEvent, PhotoSource, PromoSlide, PepsEvent, Team } from './types';
 
 function svgDataUrl(label: string, from: string, to: string, accent = '#a6ff5b'): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 600"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${from}"/><stop offset="1" stop-color="${to}"/></linearGradient><filter id="blur"><feGaussianBlur stdDeviation="38"/></filter></defs><rect width="900" height="600" fill="url(#g)"/><circle cx="720" cy="100" r="170" fill="${accent}" opacity=".18" filter="url(#blur)"/><circle cx="130" cy="520" r="230" fill="#ffffff" opacity=".07"/><path d="M0 450C220 350 290 580 510 430s270-50 390 20v150H0Z" fill="#06101d" opacity=".42"/><text x="54" y="105" fill="#fff" font-family="Arial,sans-serif" font-size="28" font-weight="700" letter-spacing="5">PEPS LIVE</text><text x="54" y="500" fill="#fff" font-family="Arial,sans-serif" font-size="58" font-weight="800">${label}</text></svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function promoDataUrl(kicker: string, label: string, from: string, to: string, accent: string): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${from}"/><stop offset="1" stop-color="${to}"/></linearGradient><filter id="blur"><feGaussianBlur stdDeviation="48"/></filter></defs><rect width="1600" height="900" fill="url(#g)"/><circle cx="1320" cy="145" r="250" fill="${accent}" opacity=".22" filter="url(#blur)"/><circle cx="230" cy="810" r="340" fill="#06101d" opacity=".26"/><path d="M0 690C330 520 470 810 820 610s500-90 780 75v215H0Z" fill="#06101d" opacity=".52"/><path d="M1040 0h560v900h-210c-96-254-150-486-350-900Z" fill="#ffffff" opacity=".04"/><text x="92" y="144" fill="#ffffff" font-family="Arial,sans-serif" font-size="30" font-weight="700" letter-spacing="7">${kicker}</text><text x="92" y="700" fill="#ffffff" font-family="Arial,sans-serif" font-size="104" font-weight="800">${label}</text><rect x="96" y="758" width="180" height="8" rx="4" fill="${accent}"/></svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
@@ -161,6 +166,11 @@ const photos: PhotoAsset[] = [
   { id: 'photo-ea-02', photoEventId: 'photo-event-rising-stars', teamSlug: 'eastside-athletic', image: photoDataUrl('EA · 02', '#3b2769', '#111d34', '#b6a0ff'), label: 'Action frame 02', capturedAt: '15:38' },
 ];
 
+const promoSlides: PromoSlide[] = [
+  { id: 'promo-slide-live-cup', image: promoDataUrl('PEPS LIVE EXPERIENCE', 'LIVE CUP', '#123f4c', '#071624', '#b9ff68'), durationSeconds: 6 },
+  { id: 'promo-slide-photo-match', image: promoDataUrl('FIND YOUR MOMENT', 'PHOTO MATCH', '#263b59', '#0a1726', '#80e4ff'), durationSeconds: 6 },
+];
+
 const drivePreviewUrls = [
   'https://lh3.googleusercontent.com/d/1ABPibzVzSEmQx2cN1IpuQk4XCgW0W5RP=w1200',
   'https://lh3.googleusercontent.com/d/1ofOqChDEZmZwsVkwAOUi8iDYc5b_VO3K=w1200',
@@ -196,6 +206,6 @@ const matchPairs: MatchPair[] = [
 
 const seededMatchPairs = matchPairs.map((pair, index) => index === 0 ? { ...pair, photoSources: demoMatchSources } : pair);
 
-export const seedState: AppState = { events, teams, photoEvents, photos, matchPairs: seededMatchPairs };
+export const seedState: AppState = { events, teams, photoEvents, photos, matchPairs: seededMatchPairs, promoSlides };
 
-export { events, teams, photoEvents, photos, seededMatchPairs as matchPairs };
+export { events, teams, photoEvents, photos, promoSlides, seededMatchPairs as matchPairs };
