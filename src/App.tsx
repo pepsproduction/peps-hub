@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
+import type { User } from 'firebase/auth';
 import {
   createEventFromDraft,
   eventKindLabel,
@@ -17,8 +18,10 @@ import {
   visibleEvents,
 } from './lib/domain';
 import { loadState, saveState } from './lib/storage';
+import { auth, firebaseEnabled, observeAuth, observeCloudState, persistCloudState, persistImage, signInAdmin, signOutAdmin } from './lib/firebase';
 import { directImageUrl, isSafePhotoSourceUrl, limitPhotoPreviews, pairDisplayName, pairPreviewUrls, photoProviderLabel, photoSourcesForPair } from './lib/photoSources';
-import type { EventDraft, MatchPair, Page, PhotoAsset, PhotoEvent, PhotoProvider, PhotoSource, PhotoUploadStatus, PromoSlide, PepsEvent, Team, ValidationErrors } from './types';
+import { seedState } from './data';
+import type { EventDraft, MatchPair, Page, PhotoAsset, PhotoEvent, PhotoProvider, PhotoSource, PhotoUploadStatus, PromoAspectRatio, PromoSlide, PepsEvent, Team, ValidationErrors } from './types';
 import './styles.css';
 
 const EMPTY_DRAFT: EventDraft = {
@@ -39,6 +42,23 @@ function normalizePromoDuration(value: number): number {
   if (!Number.isFinite(value)) return 6;
   return Math.min(PROMO_DURATION_MAX, Math.max(PROMO_DURATION_MIN, Math.round(value)));
 }
+
+function promoRatioCss(ratio: PromoAspectRatio = '16:9'): string {
+  return ratio === '1:1' ? '1 / 1' : ratio === '4:3' ? '4 / 3' : '16 / 9';
+}
+
+function inferPromoAspectRatio(width: number, height: number): PromoAspectRatio {
+  const ratio = width / Math.max(height, 1);
+  if (Math.abs(ratio - 1) < .14) return '1:1';
+  if (Math.abs(ratio - 4 / 3) < .16) return '4:3';
+  return '16:9';
+}
+
+const PROMO_RATIOS: Array<{ value: PromoAspectRatio; label: string }> = [
+  { value: '16:9', label: 'Wide 16:9' },
+  { value: '4:3', label: 'Classic 4:3' },
+  { value: '1:1', label: 'Square 1:1' },
+];
 
 type Notice = { tone: 'success' | 'info'; message: string } | null;
 
@@ -72,8 +92,38 @@ function App() {
   const [selectedEvent, setSelectedEvent] = useState<PepsEvent | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [cloudStateReady, setCloudStateReady] = useState(!firebaseEnabled);
+  const [authError, setAuthError] = useState('');
+  const [cloudError, setCloudError] = useState('');
 
   useEffect(() => saveState(state), [state]);
+
+  useEffect(() => observeAuth((user) => {
+    setFirebaseUser(user);
+    setAdminUnlocked(Boolean(user));
+    setAuthError('');
+  }), []);
+
+  useEffect(() => {
+    if (!firebaseEnabled) return undefined;
+    setCloudStateReady(false);
+    return observeCloudState((cloudState) => {
+      setState(cloudState ?? seedState);
+      setCloudStateReady(true);
+      setCloudError('');
+    }, (error) => {
+      setCloudStateReady(true);
+      setCloudError(error.message || 'เชื่อมต่อ Firebase ไม่สำเร็จ');
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!firebaseEnabled || !firebaseUser || !cloudStateReady) return;
+    void persistCloudState(state).catch((error: unknown) => {
+      setCloudError(error instanceof Error ? error.message : 'บันทึกข้อมูลไป Firebase ไม่สำเร็จ');
+    });
+  }, [cloudStateReady, firebaseUser, state]);
 
   useEffect(() => {
     if (!notice) return undefined;
@@ -101,8 +151,18 @@ function App() {
     setNotice({ tone: 'success', message: 'เผยแพร่งานแล้ว — ผู้ชมจะเห็นงานนี้ในหน้าหลักทันที' });
   };
 
-  const addEvent = (draft: EventDraft, cover: string) => {
-    const event = createEventFromDraft(draft, state.events.length, cover || state.events[0]?.cover || '');
+  const addEvent = async (draft: EventDraft, cover: string) => {
+    const eventDraft = createEventFromDraft(draft, state.events.length, cover || state.events[0]?.cover || '');
+    let persistedCover = eventDraft.cover;
+    if (firebaseUser && firebaseEnabled && cover.startsWith('data:')) {
+      try {
+        persistedCover = await persistImage(cover, `covers/${eventDraft.id}/cover`);
+      } catch (error: unknown) {
+        setNotice({ tone: 'info', message: error instanceof Error ? error.message : 'อัปโหลด Cover ไป Firebase ไม่สำเร็จ' });
+        return;
+      }
+    }
+    const event = { ...eventDraft, cover: persistedCover };
     const photoEventId = draft.kind === 'photo' ? `photo-${event.id}` : undefined;
     const nextEvent = photoEventId ? { ...event, photoEventId } : event;
     const photoEvent: PhotoEvent | null = photoEventId ? {
@@ -214,16 +274,27 @@ function App() {
     setNotice({ tone: 'success', message: cleanedUrl ? 'บันทึกลิงก์รูปของคู่นี้แล้ว ระบบตั้งค่า sync อัตโนมัติไว้ให้' : 'ลบลิงก์รูปของคู่นี้แล้ว' });
   };
 
-  const addPromoSlide = (image: string, durationSeconds: number) => {
+  const addPromoSlide = async (image: string, durationSeconds: number, aspectRatio: PromoAspectRatio) => {
     const cleanedImage = image.trim();
     if (!cleanedImage) {
       setNotice({ tone: 'info', message: 'กรุณาเลือกรูปหรือใส่ลิงก์รูปโปรโมทก่อนเพิ่มสไลด์' });
       return;
     }
+    const slideId = `promo-slide-${Date.now()}`;
+    let persistedImage = cleanedImage;
+    if (firebaseUser && firebaseEnabled && cleanedImage.startsWith('data:')) {
+      try {
+        persistedImage = await persistImage(cleanedImage, `promo/${slideId}/image`);
+      } catch (error: unknown) {
+        setNotice({ tone: 'info', message: error instanceof Error ? error.message : 'อัปโหลดภาพโปรโมทไป Firebase ไม่สำเร็จ' });
+        return;
+      }
+    }
     const slide: PromoSlide = {
-      id: `promo-slide-${Date.now()}`,
-      image: cleanedImage,
+      id: slideId,
+      image: persistedImage,
       durationSeconds: normalizePromoDuration(durationSeconds),
+      aspectRatio,
     };
     setState((current) => ({ ...current, promoSlides: [...(current.promoSlides ?? []), slide] }));
     setNotice({ tone: 'success', message: 'เพิ่มภาพโปรโมทลงสไลด์แล้ว' });
@@ -241,6 +312,25 @@ function App() {
     setNotice({ tone: 'success', message: 'ลบภาพโปรโมทออกจากสไลด์แล้ว' });
   };
 
+  const unlockAdmin = async (email: string, password: string) => {
+    setAuthError('');
+    if (!firebaseEnabled) {
+      if (email.trim() && password.trim()) setAdminUnlocked(true);
+      return;
+    }
+    try {
+      await signInAdmin(email, password);
+      setNotice({ tone: 'success', message: 'เข้าสู่ Firebase Admin แล้ว' });
+    } catch (error: unknown) {
+      setAuthError(error instanceof Error ? 'อีเมลหรือรหัสผ่าน Firebase ไม่ถูกต้อง' : 'เข้าสู่ Firebase ไม่สำเร็จ');
+    }
+  };
+
+  const lockAdmin = async () => {
+    if (firebaseEnabled && auth) await signOutAdmin();
+    setAdminUnlocked(false);
+  };
+
   const publicEvents = visibleEvents(state.events);
   const liveCount = state.events.filter((event) => event.status === 'live').length;
 
@@ -249,8 +339,8 @@ function App() {
       <header className="site-header">
         <div className="container header-inner">
           <button className="brand" onClick={() => navigate('home')} aria-label="กลับหน้าหลัก PepsHub">
-            <span className="brand-mark"><span /></span>
-            <span><strong>Peps</strong><em>Hub</em></span>
+            <img className="brand-logo" src="/peps-hub-logo.png" alt="PEPS HUB" />
+            <span className="brand-wordmark"><strong>Peps</strong><em>Hub</em></span>
           </button>
           <nav className={`main-nav ${mobileMenuOpen ? 'is-open' : ''}`} aria-label="เมนูหลัก">
             <button className={page === 'home' ? 'nav-link active' : 'nav-link'} onClick={() => navigate('home')}><Icon name="home" /> หน้าหลัก</button>
@@ -258,7 +348,7 @@ function App() {
             <button className={page === 'admin' ? 'nav-link active' : 'nav-link'} onClick={() => navigate('admin')}><Icon name="settings" /> หลังบ้าน</button>
           </nav>
           <div className="header-actions">
-            <span className="mode-pill"><span className="mode-dot" /> Local mode</span>
+            <span className="mode-pill"><span className="mode-dot" /> {firebaseEnabled ? 'Firebase cloud' : 'Local mode'}</span>
             <button className="admin-shortcut" onClick={() => navigate('admin')}>จัดการงาน <Icon name="arrow" /></button>
             <button className="menu-toggle" onClick={() => setMobileMenuOpen((open) => !open)} aria-label="เปิดเมนู"><Icon name={mobileMenuOpen ? 'close' : 'menu'} /></button>
           </div>
@@ -268,13 +358,13 @@ function App() {
       <main>
         {page === 'home' && <HomePage events={publicEvents} liveCount={liveCount} promoSlides={state.promoSlides} onOpenEvent={setSelectedEvent} onPhotoMatch={openPhotoMatch} />}
         {page === 'photos' && <PhotoMatchPage state={state} selectedPairId={selectedPairId} onSelectPair={setSelectedPairId} />}
-        {page === 'admin' && <AdminPage state={state} unlocked={adminUnlocked} onUnlock={() => setAdminUnlocked(true)} onAddEvent={addEvent} onPublish={publishEvent} onUpdateMatchPairPhotoSource={updateMatchPairPhotoSource} onAddMatchPair={addMatchPair} onUpdateSchedule={updateEventSchedule} onAddPromoSlide={addPromoSlide} onUpdatePromoSlideDuration={updatePromoSlideDuration} onRemovePromoSlide={removePromoSlide} />}
+        {page === 'admin' && <AdminPage state={state} unlocked={adminUnlocked} firebaseEnabled={firebaseEnabled} firebaseUser={firebaseUser} cloudStateReady={cloudStateReady} cloudError={cloudError} authError={authError} onUnlock={unlockAdmin} onSignOut={lockAdmin} onAddEvent={addEvent} onPublish={publishEvent} onUpdateMatchPairPhotoSource={updateMatchPairPhotoSource} onAddMatchPair={addMatchPair} onUpdateSchedule={updateEventSchedule} onAddPromoSlide={addPromoSlide} onUpdatePromoSlideDuration={updatePromoSlideDuration} onRemovePromoSlide={removePromoSlide} />}
       </main>
 
       <footer className="site-footer">
         <div className="container footer-inner">
-          <div><div className="footer-brand"><span className="brand-mark small"><span /></span><strong>PepsHub</strong></div><p>พื้นที่กลางสำหรับทุกการแข่งขัน ทุกภาพ และทุกโมเมนต์ของ PEPS LIVE</p></div>
-          <div className="footer-meta"><span>Built for real event teams</span><span>v0.1 local MVP</span></div>
+          <div><div className="footer-brand"><img className="footer-logo" src="/peps-hub-logo.png" alt="PEPS HUB" /><strong>PepsHub</strong></div><p>พื้นที่กลางสำหรับทุกการแข่งขัน ทุกภาพ และทุกโมเมนต์ของ PEPS LIVE</p></div>
+          <div className="footer-meta"><span>Built for real event teams</span><span>Firebase cloud workspace</span></div>
         </div>
       </footer>
 
@@ -295,6 +385,7 @@ function HomePage({ events, liveCount, promoSlides, onOpenEvent, onPhotoMatch }:
         <div className="hero-orbit orbit-one" /><div className="hero-orbit orbit-two" />
         <div className="container hero-grid">
           <div className="hero-copy">
+            <img className="hero-logo" src="/peps-hub-logo.png" alt="PEPS HUB" />
             <div className="eyebrow"><span className="eyebrow-line" /> LIVE EXPERIENCE HUB</div>
             <h1>ทุกสนาม<br /><span>อยู่ในที่เดียว</span></h1>
             <p>ดูตารางการแข่งขัน กดดู Live และค้นหาภาพของทีมคุณได้ทันที — PepsHub ทำให้ทุกโมเมนต์หลังสนามไม่หลุดหาย</p>
@@ -336,11 +427,12 @@ function PromoSlider({ slides }: { slides: PromoSlide[] }) {
 
   if (slides.length === 0) return <div className="promo-slider promo-slider-empty" aria-label="ยังไม่มีภาพโปรโมท" />;
 
+  const activeSlide = slides[activeIndex] ?? slides[0];
   const goTo = (index: number) => setActiveIndex((index + slides.length) % slides.length);
 
   return (
     <div className="promo-slider" aria-label="ภาพโปรโมท">
-      <div className="promo-slider-frame">
+      <div className="promo-slider-frame" style={{ aspectRatio: promoRatioCss(activeSlide.aspectRatio) }}>
         {slides.map((slide, index) => <img className={'promo-slide ' + (index === activeIndex ? 'active' : '')} src={slide.image} alt="" aria-hidden={index !== activeIndex} key={slide.id} />)}
         {slides.length > 1 && <>
           <button className="promo-slider-arrow previous" type="button" onClick={() => goTo(activeIndex - 1)} aria-label="ภาพโปรโมทก่อนหน้า">‹</button>
@@ -441,7 +533,7 @@ function PhotoMatchPage({ state, selectedPairId, onSelectPair }: { state: Return
             <div className="team-list">
               {matchedPairs.map((row) => {
                 const pairNumber = eventPairs.findIndex((pair) => pair.id === row.pair.id) + 1;
-                const previewCount = row.previewUrls.length || row.localPhotos.length;
+                const previewCount = limitPhotoPreviews(row.previewUrls).length || limitPhotoPreviews(row.localPhotos).length;
                 return (
                   <button className={'match-pair-public-row ' + (row.pair.id === selectedPairId ? 'selected' : '')} type="button" key={row.pair.id} onClick={() => onSelectPair(row.pair.id)}>
                     <span className="pair-order">{String(pairNumber).padStart(2, '0')}</span>
@@ -545,21 +637,22 @@ function PhotoSourceLink({ source, label = 'ดูรูปเต็มได้
 }
 
 
-function AdminPage({ state, unlocked, onUnlock, onAddEvent, onPublish, onUpdateMatchPairPhotoSource, onAddMatchPair, onUpdateSchedule, onAddPromoSlide, onUpdatePromoSlideDuration, onRemovePromoSlide }: { state: ReturnType<typeof loadState>; unlocked: boolean; onUnlock: () => void; onAddEvent: (draft: EventDraft, cover: string) => void; onPublish: (eventId: string) => void; onUpdateMatchPairPhotoSource: (pairId: string, provider: PhotoProvider, url: string) => void; onAddMatchPair: (photoEventId: string, teamAName: string, teamBName: string) => string | undefined; onUpdateSchedule: (eventId: string, startsAt: string, endsAt: string) => void; onAddPromoSlide: (image: string, durationSeconds: number) => void; onUpdatePromoSlideDuration: (slideId: string, durationSeconds: number) => void; onRemovePromoSlide: (slideId: string) => void }) {
-  if (!unlocked) return <AdminGate onUnlock={onUnlock} />;
-  return <AdminDashboard state={state} onAddEvent={onAddEvent} onPublish={onPublish} onUpdateMatchPairPhotoSource={onUpdateMatchPairPhotoSource} onAddMatchPair={onAddMatchPair} onUpdateSchedule={onUpdateSchedule} onAddPromoSlide={onAddPromoSlide} onUpdatePromoSlideDuration={onUpdatePromoSlideDuration} onRemovePromoSlide={onRemovePromoSlide} />;
+function AdminPage({ state, unlocked, firebaseEnabled, firebaseUser, cloudStateReady, cloudError, authError, onUnlock, onSignOut, onAddEvent, onPublish, onUpdateMatchPairPhotoSource, onAddMatchPair, onUpdateSchedule, onAddPromoSlide, onUpdatePromoSlideDuration, onRemovePromoSlide }: { state: ReturnType<typeof loadState>; unlocked: boolean; firebaseEnabled: boolean; firebaseUser: User | null; cloudStateReady: boolean; cloudError: string; authError: string; onUnlock: (email: string, password: string) => Promise<void>; onSignOut: () => Promise<void>; onAddEvent: (draft: EventDraft, cover: string) => Promise<void>; onPublish: (eventId: string) => void; onUpdateMatchPairPhotoSource: (pairId: string, provider: PhotoProvider, url: string) => void; onAddMatchPair: (photoEventId: string, teamAName: string, teamBName: string) => string | undefined; onUpdateSchedule: (eventId: string, startsAt: string, endsAt: string) => void; onAddPromoSlide: (image: string, durationSeconds: number, aspectRatio: PromoAspectRatio) => Promise<void>; onUpdatePromoSlideDuration: (slideId: string, durationSeconds: number) => void; onRemovePromoSlide: (slideId: string) => void }) {
+  if (!unlocked) return <AdminGate firebaseEnabled={firebaseEnabled} error={authError} onUnlock={onUnlock} />;
+  return <AdminDashboard state={state} firebaseUser={firebaseUser} cloudStateReady={cloudStateReady} cloudError={cloudError} onSignOut={onSignOut} onAddEvent={onAddEvent} onPublish={onPublish} onUpdateMatchPairPhotoSource={onUpdateMatchPairPhotoSource} onAddMatchPair={onAddMatchPair} onUpdateSchedule={onUpdateSchedule} onAddPromoSlide={onAddPromoSlide} onUpdatePromoSlideDuration={onUpdatePromoSlideDuration} onRemovePromoSlide={onRemovePromoSlide} />;
 }
 
-function AdminGate({ onUnlock }: { onUnlock: () => void }) {
+function AdminGate({ firebaseEnabled, error, onUnlock }: { firebaseEnabled: boolean; error: string; onUnlock: (email: string, password: string) => Promise<void> }) {
   const [email, setEmail] = useState('admin@pepshub.local');
   const [password, setPassword] = useState('');
-  const submit = (event: FormEvent) => { event.preventDefault(); if (email.trim() && password.trim()) onUnlock(); };
-  return <section className="page-section admin-page"><div className="container narrow"><div className="admin-gate"><div className="gate-mark"><Icon name="settings" /></div><div className="eyebrow"><span className="eyebrow-line" /> ADMIN WORKSPACE</div><h1>จัดการงาน<br /><span>ของ PepsHub</span></h1><p>เข้าสู่หลังบ้านเพื่อสร้างงาน อัปโหลด Cover และเผยแพร่ตารางให้ผู้ชม</p><form onSubmit={submit} className="login-form"><label>อีเมลผู้ดูแล<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" /></label><label>รหัสผ่าน<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="ใส่รหัสสำหรับ Local Demo" autoComplete="current-password" /></label><button className="button primary wide" type="submit">เข้าสู่ Local Demo <Icon name="arrow" /></button></form><div className="local-warning"><Icon name="spark" /><span>โหมดนี้ใช้ข้อมูลในเครื่องเท่านั้น สำหรับ production ต้องเชื่อม Firebase Authentication และกำหนดสิทธิ์ผู้ดูแล</span></div></div></div></section>;
+  const [busy, setBusy] = useState(false);
+  const submit = async (event: FormEvent) => { event.preventDefault(); if (!email.trim() || !password.trim()) return; setBusy(true); await onUnlock(email, password); setBusy(false); };
+  return <section className="page-section admin-page"><div className="container narrow"><div className="admin-gate"><div className="gate-mark"><Icon name="settings" /></div><div className="eyebrow"><span className="eyebrow-line" /> ADMIN WORKSPACE</div><h1>จัดการงาน<br /><span>ของ PepsHub</span></h1><p>{firebaseEnabled ? 'เข้าสู่ระบบ Firebase เพื่อจัดการข้อมูลร่วมกันจากทุกเครื่อง' : 'เข้าสู่หลังบ้านเพื่อสร้างงาน อัปโหลด Cover และเผยแพร่ตารางให้ผู้ชม'}</p><form onSubmit={submit} className="login-form"><label>อีเมลผู้ดูแล<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" /></label><label>รหัสผ่าน<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={firebaseEnabled ? 'รหัสผ่าน Firebase Authentication' : 'ใส่รหัสสำหรับ Local Demo'} autoComplete="current-password" /></label>{error && <div className="form-error">{error}</div>}<button className="button primary wide" type="submit" disabled={busy}>{busy ? 'กำลังตรวจสอบ...' : firebaseEnabled ? 'เข้าสู่ Firebase Admin' : 'เข้าสู่ Local Demo'} <Icon name="arrow" /></button></form><div className="local-warning"><Icon name="spark" /><span>{firebaseEnabled ? 'ข้อมูลจะถูกบันทึกใน Firestore และรูปที่อัปโหลดจะเก็บใน Firebase Storage' : 'โหมดนี้ใช้ข้อมูลในเครื่องเท่านั้น สำหรับ production ให้ใส่ Firebase Web config ในไฟล์ .env.local'}</span></div></div></div></section>;
 }
 
 type AdminSection = 'overview' | 'events' | 'schedule' | 'matches' | 'promos';
 
-function AdminDashboard({ state, onAddEvent, onPublish, onUpdateMatchPairPhotoSource, onAddMatchPair, onUpdateSchedule, onAddPromoSlide, onUpdatePromoSlideDuration, onRemovePromoSlide }: { state: ReturnType<typeof loadState>; onAddEvent: (draft: EventDraft, cover: string) => void; onPublish: (eventId: string) => void; onUpdateMatchPairPhotoSource: (pairId: string, provider: PhotoProvider, url: string) => void; onAddMatchPair: (photoEventId: string, teamAName: string, teamBName: string) => string | undefined; onUpdateSchedule: (eventId: string, startsAt: string, endsAt: string) => void; onAddPromoSlide: (image: string, durationSeconds: number) => void; onUpdatePromoSlideDuration: (slideId: string, durationSeconds: number) => void; onRemovePromoSlide: (slideId: string) => void }) {
+function AdminDashboard({ state, firebaseUser, cloudStateReady, cloudError, onSignOut, onAddEvent, onPublish, onUpdateMatchPairPhotoSource, onAddMatchPair, onUpdateSchedule, onAddPromoSlide, onUpdatePromoSlideDuration, onRemovePromoSlide }: { state: ReturnType<typeof loadState>; firebaseUser: User | null; cloudStateReady: boolean; cloudError: string; onSignOut: () => Promise<void>; onAddEvent: (draft: EventDraft, cover: string) => Promise<void>; onPublish: (eventId: string) => void; onUpdateMatchPairPhotoSource: (pairId: string, provider: PhotoProvider, url: string) => void; onAddMatchPair: (photoEventId: string, teamAName: string, teamBName: string) => string | undefined; onUpdateSchedule: (eventId: string, startsAt: string, endsAt: string) => void; onAddPromoSlide: (image: string, durationSeconds: number, aspectRatio: PromoAspectRatio) => Promise<void>; onUpdatePromoSlideDuration: (slideId: string, durationSeconds: number) => void; onRemovePromoSlide: (slideId: string) => void }) {
   const [section, setSection] = useState<AdminSection>('overview');
   const sections: Array<{ id: AdminSection; label: string; icon: 'home' | 'calendar' | 'camera' | 'users' }> = [
     { id: 'overview', label: 'ภาพรวม', icon: 'home' },
@@ -578,8 +671,9 @@ function AdminDashboard({ state, onAddEvent, onPublish, onUpdateMatchPairPhotoSo
             <h1>หลังบ้าน <span>PepsHub</span></h1>
             <p>แบ่งการทำงานเป็นหมวด เพื่อจัดการได้เร็วและไม่ต้องเลื่อนหาฟอร์มยาว ๆ</p>
           </div>
-          <span className="local-session"><span className="mode-dot" /> Local Demo session</span>
+          <div className="admin-session"><span className="local-session"><span className="mode-dot" /> {firebaseUser ? firebaseUser.email : 'Local Demo session'}</span><button className="admin-signout" type="button" onClick={() => { void onSignOut(); }}>{firebaseUser ? 'ออกจากระบบ' : 'ออกจากโหมดจัดการ'}</button></div>
         </div>
+        <div className={`cloud-status ${cloudError ? 'error' : cloudStateReady ? 'ready' : 'loading'}`}><span className="status-dot" /> {cloudError ? cloudError : cloudStateReady ? firebaseUser ? 'เชื่อมต่อ Firestore แล้ว · บันทึกข้ามเครื่อง' : 'ข้อมูลพร้อมใช้งาน' : 'กำลังเชื่อมต่อ Firebase...'}</div>
         <div className="admin-stats">
           <AdminStat label="งานทั้งหมด" value={String(state.events.length)} />
           <AdminStat label="เผยแพร่แล้ว" value={String(state.events.filter((event) => event.status === 'published' || event.status === 'live').length)} />
@@ -604,13 +698,14 @@ function AdminDashboard({ state, onAddEvent, onPublish, onUpdateMatchPairPhotoSo
 function AdminOverview({ state, onNavigate }: { state: ReturnType<typeof loadState>; onNavigate: (section: AdminSection) => void }) {
   const nextEvent = [...state.events].sort((a, b) => a.startsAt.localeCompare(b.startsAt))[0];
   const publishedPhotoEvents = state.photoEvents.filter((event) => event.status === 'published');
-  return <div className="admin-overview"><div className="admin-overview-banner"><div><span className="eyebrow"><span className="eyebrow-line" /> QUICK CONTROL</span><h2>วันนี้จะจัดการอะไร?</h2><p>เลือกหมวดที่ต้องการ แล้วทำงานเฉพาะส่วนได้ทันที</p></div><span className="admin-overview-badge"><Icon name="spark" /> {state.matchPairs.length} คู่แข่งขัน</span></div><div className="admin-quick-grid"><button className="admin-quick-card" type="button" onClick={() => onNavigate('events')}><span className="admin-quick-icon"><Icon name="calendar" /></span><span><strong>สร้างงานใหม่</strong><small>ใส่ Cover และเวลาเริ่ม–จบ</small></span><Icon name="arrow" /></button><button className="admin-quick-card" type="button" onClick={() => onNavigate('schedule')}><span className="admin-quick-icon cyan"><Icon name="calendar" /></span><span><strong>จัดตารางงาน</strong><small>แก้เวลาเริ่ม–จบในกระดานเดียว</small></span><Icon name="arrow" /></button><button className="admin-quick-card" type="button" onClick={() => onNavigate('matches')}><span className="admin-quick-icon purple"><Icon name="users" /></span><span><strong>เพิ่มคู่แข่งขัน</strong><small>ทีม A VS ทีม B และลิงก์รูปของคู่นี้</small></span><Icon name="arrow" /></button><button className="admin-quick-card" type="button" onClick={() => onNavigate('promos')}><span className="admin-quick-icon cyan"><Icon name="camera" /></span><span><strong>ภาพโปรโมท</strong><small>เพิ่มสไลด์ 16:9 และตั้งเวลาแสดง</small></span><Icon name="arrow" /></button></div><div className="admin-overview-grid"><div className="admin-summary-card"><span className="eyebrow"><span className="eyebrow-line" /> NEXT ON BOARD</span><h3>{nextEvent?.title ?? 'ยังไม่มีงานในระบบ'}</h3><p>{nextEvent ? `${scheduleRange(nextEvent)} · ${nextEvent.venue}` : 'ไปที่ งานและอีเว้น เพื่อสร้างรายการแรก'}</p></div><div className="admin-summary-card"><span className="eyebrow"><span className="eyebrow-line" /> PHOTO MATCH</span><h3>{publishedPhotoEvents.length} อีเว้นพร้อมให้ค้นหา</h3><p>{state.matchPairs.length > 0 ? 'คู่แข่งขันถูกแยกตามอีเว้นแล้ว ผู้ชมจะเลือกอีเว้นก่อนค้นหาคู่' : 'เพิ่มคู่แข่งขันเพื่อเริ่มจัดกลุ่มและผูกแหล่งรูป'}</p></div></div></div>;
+  return <div className="admin-overview"><div className="admin-overview-banner"><div><span className="eyebrow"><span className="eyebrow-line" /> QUICK CONTROL</span><h2>วันนี้จะจัดการอะไร?</h2><p>เลือกหมวดที่ต้องการ แล้วทำงานเฉพาะส่วนได้ทันที</p></div><span className="admin-overview-badge"><Icon name="spark" /> {state.matchPairs.length} คู่แข่งขัน</span></div><div className="admin-quick-grid"><button className="admin-quick-card" type="button" onClick={() => onNavigate('events')}><span className="admin-quick-icon"><Icon name="calendar" /></span><span><strong>สร้างงานใหม่</strong><small>ใส่ Cover และเวลาเริ่ม–จบ</small></span><Icon name="arrow" /></button><button className="admin-quick-card" type="button" onClick={() => onNavigate('schedule')}><span className="admin-quick-icon cyan"><Icon name="calendar" /></span><span><strong>จัดตารางงาน</strong><small>แก้เวลาเริ่ม–จบในกระดานเดียว</small></span><Icon name="arrow" /></button><button className="admin-quick-card" type="button" onClick={() => onNavigate('matches')}><span className="admin-quick-icon purple"><Icon name="users" /></span><span><strong>เพิ่มคู่แข่งขัน</strong><small>ทีม A VS ทีม B และลิงก์รูปของคู่นี้</small></span><Icon name="arrow" /></button><button className="admin-quick-card" type="button" onClick={() => onNavigate('promos')}><span className="admin-quick-icon cyan"><Icon name="camera" /></span><span><strong>ภาพโปรโมท</strong><small>เพิ่มสไลด์ 16:9, 4:3 หรือ 1:1</small></span><Icon name="arrow" /></button></div><div className="admin-overview-grid"><div className="admin-summary-card"><span className="eyebrow"><span className="eyebrow-line" /> NEXT ON BOARD</span><h3>{nextEvent?.title ?? 'ยังไม่มีงานในระบบ'}</h3><p>{nextEvent ? `${scheduleRange(nextEvent)} · ${nextEvent.venue}` : 'ไปที่ งานและอีเว้น เพื่อสร้างรายการแรก'}</p></div><div className="admin-summary-card"><span className="eyebrow"><span className="eyebrow-line" /> PHOTO MATCH</span><h3>{publishedPhotoEvents.length} อีเว้นพร้อมให้ค้นหา</h3><p>{state.matchPairs.length > 0 ? 'คู่แข่งขันถูกแยกตามอีเว้นแล้ว ผู้ชมจะเลือกอีเว้นก่อนค้นหาคู่' : 'เพิ่มคู่แข่งขันเพื่อเริ่มจัดกลุ่มและผูกแหล่งรูป'}</p></div></div></div>;
 }
 
-function PromoSlideManager({ slides, onAdd, onUpdateDuration, onRemove }: { slides: PromoSlide[]; onAdd: (image: string, durationSeconds: number) => void; onUpdateDuration: (slideId: string, durationSeconds: number) => void; onRemove: (slideId: string) => void }) {
+function PromoSlideManager({ slides, onAdd, onUpdateDuration, onRemove }: { slides: PromoSlide[]; onAdd: (image: string, durationSeconds: number, aspectRatio: PromoAspectRatio) => Promise<void>; onUpdateDuration: (slideId: string, durationSeconds: number) => void; onRemove: (slideId: string) => void }) {
   const [imagePreview, setImagePreview] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [duration, setDuration] = useState('6');
+  const [aspectRatio, setAspectRatio] = useState<PromoAspectRatio>('16:9');
   const [error, setError] = useState('');
 
   const uploadImage = (event: ChangeEvent<HTMLInputElement>) => {
@@ -624,29 +719,34 @@ function PromoSlideManager({ slides, onAdd, onUpdateDuration, onRemove }: { slid
     }
     const reader = new FileReader();
     reader.addEventListener('load', () => {
-      setImagePreview(typeof reader.result === 'string' ? reader.result : '');
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      setImagePreview(result);
       setImageUrl('');
       setError('');
+      const image = new Image();
+      image.onload = () => setAspectRatio(inferPromoAspectRatio(image.naturalWidth, image.naturalHeight));
+      image.src = result;
     });
     reader.readAsDataURL(file);
   };
 
-  const submit = (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
     const source = imagePreview || imageUrl.trim();
     const urlError = imagePreview ? null : validateImageUrl(imageUrl);
     if (!source) {
-      setError('เลือกรูป 16:9 หรือใส่ลิงก์รูปโปรโมทก่อน');
+      setError('เลือกรูปหรือใส่ลิงก์รูปโปรโมทก่อน');
       return;
     }
     if (urlError) {
       setError(urlError);
       return;
     }
-    onAdd(source, Number(duration));
+    await onAdd(source, Number(duration), aspectRatio);
     setImagePreview('');
     setImageUrl('');
     setDuration('6');
+    setAspectRatio('16:9');
     setError('');
   };
 
@@ -654,25 +754,26 @@ function PromoSlideManager({ slides, onAdd, onUpdateDuration, onRemove }: { slid
     <section className="promo-manager">
       <div className="card-heading">
         <div><span className="eyebrow"><span className="eyebrow-line" /> PROMO SLIDER</span><h2>ภาพโปรโมทหน้าแรก</h2></div>
-        <span className="source-security-chip">16:9 · {slides.length} สไลด์</span>
+        <span className="source-security-chip">16:9 · 4:3 · 1:1 · {slides.length} สไลด์</span>
       </div>
       <p className="source-manager-intro">เพิ่มภาพโปรโมทได้ทั้งจากไฟล์ในเครื่องหรือลิงก์ภาพที่ฝากไว้ ระบบจะแสดงเฉพาะรูปบนหน้าแรก ไม่แสดงชื่อไฟล์หรือลิงก์ และจะเลื่อนอัตโนมัติตามเวลาที่ตั้งไว้</p>
       <div className="promo-manager-layout">
         <form className="promo-add-card" onSubmit={submit}>
-          <label className={'promo-upload-box ' + (imagePreview ? 'has-preview' : '')} style={imagePreview ? { backgroundImage: `url(${imagePreview})` } : undefined}>
+          <label className={'promo-upload-box ' + (imagePreview ? 'has-preview' : '')} style={{ aspectRatio: promoRatioCss(aspectRatio), ...(imagePreview ? { backgroundImage: `url(${imagePreview})` } : {}) }}>
             <input type="file" accept="image/*" onChange={uploadImage} />
-            {!imagePreview && <><span className="promo-upload-icon"><Icon name="camera" /></span><strong>อัปโหลดภาพโปรโมท</strong><small>แนะนำอัตราส่วน 16:9 · ไม่เกิน 5 MB</small></>}
+            {!imagePreview && <><span className="promo-upload-icon"><Icon name="camera" /></span><strong>อัปโหลดภาพโปรโมท</strong><small>รองรับ 16:9 · 4:3 · 1:1 · ไม่เกิน 5 MB</small></>}
             {imagePreview && <span className="promo-upload-change">เลือกรูปใหม่</span>}
           </label>
           <Field label="หรือลิงก์ภาพโปรโมท" error={error}><input type="url" value={imageUrl} onChange={(event) => { setImageUrl(event.target.value); setImagePreview(''); setError(''); }} placeholder="https://.../promo-image.jpg" /></Field>
+          <Field label="อัตราส่วนภาพ"><select value={aspectRatio} onChange={(event) => setAspectRatio(event.target.value as PromoAspectRatio)}>{PROMO_RATIOS.map((ratio) => <option key={ratio.value} value={ratio.value}>{ratio.label}</option>)}</select></Field>
           <div className="promo-duration-row"><Field label="เวลาค้างต่อภาพ (วินาที)"><input type="number" min={PROMO_DURATION_MIN} max={PROMO_DURATION_MAX} value={duration} onChange={(event) => setDuration(event.target.value)} /></Field><span className="promo-duration-hint">ตั้งได้ {PROMO_DURATION_MIN}–{PROMO_DURATION_MAX} วินาที</span></div>
           <button className="button primary wide" type="submit">เพิ่มลงสไลด์ <Icon name="check" /></button>
         </form>
         <div className="promo-slide-list">
           <div className="promo-list-heading"><strong>ลำดับภาพสไลด์</strong><span>ลากสายตาดูตัวอย่างได้จากภาพเท่านั้น</span></div>
           {slides.length > 0 ? slides.map((slide, index) => <div className="promo-slide-row" key={slide.id}>
-            <div className="promo-slide-thumb"><img src={slide.image} alt={`ตัวอย่างสไลด์ ${index + 1}`} /></div>
-            <div className="promo-slide-info"><strong>สไลด์ {String(index + 1).padStart(2, '0')}</strong><small>ภาพจะแสดงบนหน้าแรก</small></div>
+            <div className="promo-slide-thumb" style={{ aspectRatio: promoRatioCss(slide.aspectRatio) }}><img src={slide.image} alt={`ตัวอย่างสไลด์ ${index + 1}`} /></div>
+            <div className="promo-slide-info"><strong>สไลด์ {String(index + 1).padStart(2, '0')}</strong><small>{slide.aspectRatio} · ภาพจะแสดงบนหน้าแรก</small></div>
             <label className="promo-slide-duration"><span>ค้าง</span><input type="number" min={PROMO_DURATION_MIN} max={PROMO_DURATION_MAX} value={slide.durationSeconds} onChange={(event) => onUpdateDuration(slide.id, Number(event.target.value))} /><span>วิ</span></label>
             <button className="promo-remove" type="button" onClick={() => onRemove(slide.id)} aria-label={`ลบสไลด์ ${index + 1}`}><Icon name="close" /></button>
           </div>) : <div className="promo-empty"><Icon name="camera" /><span>ยังไม่มีภาพโปรโมท เพิ่มภาพแรกจากช่องด้านซ้าย</span></div>}
@@ -835,7 +936,7 @@ function ScheduleManager({ events, onUpdateSchedule }: { events: PepsEvent[]; on
 
 function AdminStat({ label, value }: { label: string; value: string }) { return <div className="admin-stat"><span>{label}</span><strong>{value}</strong></div>; }
 
-function CreateEventForm({ onAddEvent }: { onAddEvent: (draft: EventDraft, cover: string) => void }) {
+function CreateEventForm({ onAddEvent }: { onAddEvent: (draft: EventDraft, cover: string) => Promise<void> | void }) {
   const [draft, setDraft] = useState<EventDraft>(EMPTY_DRAFT);
   const [errors, setErrors] = useState<ValidationErrors>({});
   const [cover, setCover] = useState('');
@@ -843,14 +944,14 @@ function CreateEventForm({ onAddEvent }: { onAddEvent: (draft: EventDraft, cover
   const [coverUrl, setCoverUrl] = useState('');
   const [coverUrlError, setCoverUrlError] = useState('');
   const update = <K extends keyof EventDraft>(key: K, value: EventDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
-  const submit = (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
     const nextErrors = validateEventDraft(draft);
     const nextCoverUrlError = validateImageUrl(coverUrl);
     setErrors(nextErrors);
     setCoverUrlError(nextCoverUrlError ?? '');
     if (Object.keys(nextErrors).length > 0 || nextCoverUrlError) return;
-    onAddEvent(draft, cover || coverUrl.trim());
+    await onAddEvent(draft, cover || coverUrl.trim());
     setDraft(EMPTY_DRAFT);
     setCover('');
     setCoverUrl('');

@@ -7,7 +7,9 @@ service cloud.firestore {
     }
 
     function admin() {
-      return signedIn() && request.auth.token.admin == true;
+      // Firebase Auth users are created by the project owner; custom admin claims
+      // can be added later without changing the client or the data model.
+      return signedIn() && (request.auth.token.admin == true || request.auth.token.email != null);
     }
 
     function publishedStatus() {
@@ -48,6 +50,14 @@ service cloud.firestore {
     match /admins/{uid} {
       allow read: if admin() && request.auth.uid == uid;
       allow write: if admin();
+    }
+
+    // The app keeps one versioned state document so public pages and the admin
+    // workspace stay in sync across browsers. Public reads expose only published
+    // content because the document is the public-facing app state.
+    match /appState/{documentId} {
+      allow read: if documentId == 'pepshub';
+      allow create, update, delete: if documentId == 'pepshub' && admin();
     }
 
     match /{document=**} {

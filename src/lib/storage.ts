@@ -1,6 +1,6 @@
 import { seedState } from '../data';
 import { normalizePhotoSource, photoSourceForTeam } from './photoSources';
-import type { AppState } from '../types';
+import type { AppState, PromoAspectRatio } from '../types';
 
 const STORAGE_KEY = 'pepshub-state-v1';
 
@@ -19,6 +19,10 @@ function migrateState(state: AppState): AppState {
   const teams = state.teams.map((team) => ({ ...team, photoSources: Array.isArray(team.photoSources) ? team.photoSources : [] }));
   const seededPairs = cloneState(seedState).matchPairs;
   const seededPromoSlides = cloneState(seedState).promoSlides;
+  const promoSlides = (Array.isArray(state.promoSlides) ? state.promoSlides : seededPromoSlides).map((slide) => ({
+    ...slide,
+    aspectRatio: (slide.aspectRatio ?? '16:9') as PromoAspectRatio,
+  }));
   const matchPairs = (Array.isArray(state.matchPairs) ? state.matchPairs : seededPairs).map((pair) => {
     const seededSources = seededPairs.find((seedPair) => seedPair.id === pair.id)?.photoSources ?? [];
     if (Array.isArray(pair.photoSources) && pair.photoSources.length > 0) {
@@ -42,12 +46,16 @@ function migrateState(state: AppState): AppState {
   return {
     ...state,
     matchPairs,
-    promoSlides: Array.isArray(state.promoSlides) ? state.promoSlides : seededPromoSlides,
+    promoSlides,
     teams,
     photos: state.photos
       .map((photo) => ({ ...photo, photoEventId: photo.photoEventId || fallbackPhotoEventId }))
       .filter((photo) => Boolean(photo.photoEventId)),
   };
+}
+
+export function normalizeAppState(value: unknown): AppState | null {
+  return isAppState(value) ? migrateState(value) : null;
 }
 
 export function loadState(): AppState {
@@ -56,7 +64,7 @@ export function loadState(): AppState {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return cloneState(seedState);
     const parsed: unknown = JSON.parse(raw);
-    return isAppState(parsed) ? migrateState(parsed) : cloneState(seedState);
+    return normalizeAppState(parsed) ?? cloneState(seedState);
   } catch {
     return cloneState(seedState);
   }

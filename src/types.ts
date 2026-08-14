@@ -8,6 +8,8 @@ export type PhotoProvider = 'google-drive' | 'google-photos';
 
 export type PhotoUploadStatus = 'ready' | 'partial' | 'empty';
 
+export type PromoAspectRatio = '16:9' | '4:3' | '1:1';
+
 export interface PepsEvent {
   id: string;
   slug: string;
@@ -84,6 +86,7 @@ export interface PromoSlide {
   id: string;
   image: string;
   durationSeconds: number;
+  aspectRatio: PromoAspectRatio;
 }
 
 export interface AppState {

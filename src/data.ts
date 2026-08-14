@@ -167,8 +167,8 @@ const photos: PhotoAsset[] = [
 ];
 
 const promoSlides: PromoSlide[] = [
-  { id: 'promo-slide-live-cup', image: promoDataUrl('PEPS LIVE EXPERIENCE', 'LIVE CUP', '#123f4c', '#071624', '#b9ff68'), durationSeconds: 6 },
-  { id: 'promo-slide-photo-match', image: promoDataUrl('FIND YOUR MOMENT', 'PHOTO MATCH', '#263b59', '#0a1726', '#80e4ff'), durationSeconds: 6 },
+  { id: 'promo-slide-live-cup', image: promoDataUrl('PEPS LIVE EXPERIENCE', 'LIVE CUP', '#123f4c', '#071624', '#b9ff68'), durationSeconds: 6, aspectRatio: '16:9' },
+  { id: 'promo-slide-photo-match', image: promoDataUrl('FIND YOUR MOMENT', 'PHOTO MATCH', '#263b59', '#0a1726', '#80e4ff'), durationSeconds: 6, aspectRatio: '16:9' },
 ];
 
 const drivePreviewUrls = [
